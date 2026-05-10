@@ -1,0 +1,135 @@
+# ============================================================================
+# Node / TypeScript
+# ============================================================================
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+.tsimp/
+coverage/
+.nyc_output/
+test_output.log
+test_results.log
+*.test.log
+
+# ============================================================================
+# C++ / CMake / Build artifacts
+# ============================================================================
+build/
+cmake-build-*/
+out/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.map
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+*.sln
+
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================================
+# Models & indexes (too large, user-generated)
+# ============================================================================
+models/
+*.onnx
+*.engine
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# ============================================================================
+# User data / runtime state
+# ============================================================================
+# Polymath runtime state — user-local only
+.polymath/
+**/.polymath/
+**/omni_index.db
+**/omni_index.db-*
+**/audit.jsonl
+**/episodes/
+**/workspace/
+**/inbox/
+**/memory-embeddings.db*
+**/memory.db*
+**/auth.key
+
+# ============================================================================
+# IDE / editor / OS
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================================
+# Kiro / spec working area (internal planning, not for public repo)
+# ============================================================================
+.kiro/
+
+# ============================================================================
+# Dev docs not yet cleaned for public
+# ============================================================================
+HANDOFF.md
+IMPLEMENTATION_STATUS.md
+**/IMPLEMENTATION_STATUS.md
+
+# ============================================================================
+# Environment / secrets
+# ============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!*.example.key
+
+# ============================================================================
+# Temporary archives
+# ============================================================================
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# ============================================================================
+# Keep these binaries even though they match patterns above
+# ============================================================================
+!capabilities/media-memory/scripts/build_engines.sh
+!capabilities/media-memory/scripts/build_engines.ps1

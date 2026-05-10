@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Polymath Control</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={darkMode:'class'}</script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+<div id="root"></div>
+<script>
+const e=React.createElement;
+const TABS=['Dashboard','Chat','Tools','Sessions','Skills','Cron','Memory','Channels','MCP','Audit','Doctor','Config'];
+
+function getToken(){
+  let t=localStorage.getItem('polymath_token');
+  if(!t){t=prompt('Enter bearer token:');if(t)localStorage.setItem('polymath_token',t);}
+  return t||'';
+}
+const TOKEN=getToken();
+const hdrs={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
+
+function useFetch(url){
+  const[data,setData]=React.useState(null);
+  React.useEffect(()=>{fetch(url,{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData([]))},[url]);
+  return data;
+}
+
+function Dashboard(){
+  const[data,setData]=React.useState(null);
+  const[audit,setAudit]=React.useState(null);
+  React.useEffect(()=>{
+    fetch('/api/doctor',{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData({}));
+    fetch('/api/audit',{headers:hdrs}).then(r=>r.json()).then(d=>setAudit((d||[]).slice(0,5))).catch(()=>setAudit([]));
+  },[]);
+  if(!data)return e('p',null,'Loading...');
+  return e('div',{className:'p-4 space-y-4'},
+    e('div',{className:'grid grid-cols-2 md:grid-cols-4 gap-4'},
+      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'Uptime'),e('div',{className:'text-2xl'},data.uptime_seconds!=null?data.uptime_seconds+'s':'—')),
+      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'Tools'),e('div',{className:'text-2xl'},data.tools??'—')),
+      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'DB'),e('div',{className:'text-2xl'},data.db??'—')),
+      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'MCP Servers'),e('div',{className:'text-2xl'},(data.mcp_servers||[]).length))
+    ),
+    e('h3',{className:'text-sm text-gray-400'},'Recent Audit'),
+    audit&&audit.length?e('table',{className:'w-full text-sm'},e('tbody',null,audit.map((r,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-1'},r.ts),e('td',{className:'p-1'},r.tool_name),e('td',{className:'p-1'},r.outcome))))):e('p',{className:'text-gray-500'},'No entries')
+  );
+}
+
+function Chat(){
+  const[msgs,setMsgs]=React.useState([]);
+  const[input,setInput]=React.useState('');
+  const ws=React.useRef(null);
+  React.useEffect(()=>{
+    const proto=location.protocol==='https:'?'wss:':'ws:';
+    const w=new WebSocket(proto+'//'+location.host+'/ws/chat?token='+TOKEN);
+    w.onmessage=ev=>{try{const d=JSON.parse(ev.data);setMsgs(m=>[...m,{role:'assistant',text:d.text||d.answer||JSON.stringify(d)}])}catch{setMsgs(m=>[...m,{role:'assistant',text:ev.data}])}};
+    ws.current=w;
+    return()=>w.close();
+  },[]);
+  const send=()=>{if(!input.trim())return;setMsgs(m=>[...m,{role:'user',text:input}]);if(ws.current&&ws.current.readyState===1)ws.current.send(JSON.stringify({text:input}));setInput('')};
+  return e('div',{className:'flex flex-col h-full'},
+    e('div',{className:'flex-1 overflow-y-auto p-4 space-y-2'},msgs.map((m,i)=>e('div',{key:i,className:'p-2 rounded '+(m.role==='user'?'bg-blue-800 ml-8':'bg-gray-700 mr-8')},m.text))),
+    e('div',{className:'flex p-2 gap-2'},e('input',{className:'flex-1 bg-gray-800 rounded px-3 py-2',value:input,onChange:ev=>setInput(ev.target.value),onKeyDown:ev=>{if(ev.key==='Enter')send()},placeholder:'Type a message...'}),e('button',{className:'bg-blue-600 px-4 py-2 rounded',onClick:send},'Send'))
+  );
+}
+
+function Tools(){
+  const data=useFetch('/api/tools');
+  if(!data)return e('p',null,'Loading...');
+  return e('table',{className:'w-full text-sm'},e('thead',null,e('tr',null,e('th',{className:'text-left p-2'},'Name'),e('th',{className:'text-left p-2'},'Description'))),e('tbody',null,data.map((t,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-2'},t.function?.name||t.name||''),e('td',{className:'p-2'},t.function?.description||t.description||'')))));
+}
+
+function Sessions(){
+  const data=useFetch('/api/sessions');
+  if(!data)return e('p',null,'Loading...');
+  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No sessions');
+  return e('ul',{className:'p-4 space-y-1'},data.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},JSON.stringify(s))));
+}
+
+function Skills(){
+  const data=useFetch('/api/skills');
+  if(!data)return e('p',null,'Loading...');
+  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No skills');
+  return e('ul',{className:'p-4 space-y-1'},data.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},e('strong',null,s.name),' — ',s.description)));
+}
+
+function CronPanel(){
+  const[jobs,setJobs]=React.useState(null);
+  const[expr,setExpr]=React.useState('');
+  const[task,setTask]=React.useState('');
+  const load=()=>fetch('/api/cron',{headers:hdrs}).then(r=>r.json()).then(setJobs);
+  React.useEffect(()=>{load()},[]);
+  const add=()=>{if(!expr)return;fetch('/api/cron',{method:'POST',headers:hdrs,body:JSON.stringify({cron_expr:expr,task})}).then(()=>{setExpr('');setTask('');load()})};
+  if(!jobs)return e('p',null,'Loading...');
+  return e('div',{className:'p-4 space-y-4'},
+    e('div',{className:'flex gap-2'},e('input',{className:'bg-gray-800 rounded px-2 py-1',placeholder:'cron expr',value:expr,onChange:ev=>setExpr(ev.target.value)}),e('input',{className:'bg-gray-800 rounded px-2 py-1 flex-1',placeholder:'task',value:task,onChange:ev=>setTask(ev.target.value)}),e('button',{className:'bg-green-700 px-3 py-1 rounded',onClick:add},'Add')),
+    e('ul',{className:'space-y-1'},jobs.map((j,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},j.cron_expr,' — ',j.task||'(no task)')))
+  );
+}
+
+function Memory(){return e('p',{className:'p-4 text-gray-400'},'Memory panel — coming soon')}
+
+function Channels(){
+  const[channels,setChannels]=React.useState(null);
+  const[pairings,setPairings]=React.useState(null);
+  React.useEffect(()=>{
+    fetch('/api/channels',{headers:hdrs}).then(r=>r.json()).then(setChannels).catch(()=>setChannels([]));
+    fetch('/api/pairings',{headers:hdrs}).then(r=>r.json()).then(setPairings).catch(()=>setPairings([]));
+  },[]);
+  if(!channels)return e('p',null,'Loading...');
+  return e('div',{className:'p-4 space-y-4'},
+    e('h3',{className:'text-sm text-gray-400'},'Transports'),
+    channels.length?e('ul',{className:'space-y-1'},channels.map((ch,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded flex justify-between'},e('span',null,ch.name),e('span',{className:ch.status==='connected'?'text-green-400':'text-red-400'},ch.status)))):e('p',{className:'text-gray-500'},'No transports'),
+    e('h3',{className:'text-sm text-gray-400 mt-4'},'Pending Pairings'),
+    pairings&&pairings.length?e('ul',{className:'space-y-1'},pairings.map((p,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},p.channel,' — ',p.sender_id,' — code: ',e('code',null,p.code)))):e('p',{className:'text-gray-500'},'None')
+  );
+}
+
+function McpPanel(){
+  const[servers,setServers]=React.useState(null);
+  const load=()=>fetch('/api/mcp',{headers:hdrs}).then(r=>r.json()).then(setServers).catch(()=>setServers([]));
+  React.useEffect(()=>{load()},[]);
+  const reconnect=(name)=>fetch('/api/mcp/'+name+'/reconnect',{method:'POST',headers:hdrs}).then(()=>setTimeout(load,1000));
+  if(!servers)return e('p',null,'Loading...');
+  if(!servers.length)return e('p',{className:'p-4 text-gray-400'},'No MCP servers configured');
+  return e('ul',{className:'p-4 space-y-2'},servers.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-3 rounded flex justify-between items-center'},
+    e('div',null,e('strong',null,s.name),' — ',s.tools,' tools'),
+    e('div',{className:'flex items-center gap-2'},e('span',{className:s.health==='connected'?'text-green-400':'text-red-400'},s.health),e('button',{className:'bg-blue-700 px-2 py-1 rounded text-xs',onClick:()=>reconnect(s.name)},'Reconnect'))
+  )));
+}
+
+function Audit(){
+  const data=useFetch('/api/audit');
+  if(!data)return e('p',null,'Loading...');
+  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No audit entries');
+  return e('table',{className:'w-full text-sm'},e('thead',null,e('tr',null,['ts','tool_name','outcome','duration_ms'].map(h=>e('th',{key:h,className:'text-left p-2'},h)))),e('tbody',null,data.map((r,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-2'},r.ts),e('td',{className:'p-2'},r.tool_name),e('td',{className:'p-2'},r.outcome),e('td',{className:'p-2'},r.duration_ms??'')))));
+}
+
+function Doctor(){
+  const[data,setData]=React.useState(null);
+  React.useEffect(()=>{fetch('/api/doctor',{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData({}))},[]);
+  if(!data)return e('p',null,'Running checks...');
+  const checks=[
+    {label:'Gateway',status:data.gateway},
+    {label:'Database',status:data.db},
+    {label:'LLM',status:data.llm},
+  ];
+  (data.mcp_servers||[]).forEach(s=>checks.push({label:'MCP: '+s.name,status:s.health==='connected'?'ok':s.health}));
+  return e('ul',{className:'p-4 space-y-2'},checks.map((ck,i)=>e('li',{key:i,className:'flex items-center gap-2'},
+    e('span',{className:'text-lg'},ck.status==='ok'||ck.status==='connected'?'✅':ck.status==='unchecked'?'⚠️':'❌'),
+    e('span',null,ck.label),
+    e('span',{className:'text-gray-500 text-sm'},'('+ck.status+')')
+  )));
+}
+
+function Config(){
+  const data=useFetch('/api/config');
+  if(!data)return e('p',null,'Loading...');
+  return e('pre',{className:'p-4 text-xs overflow-auto bg-gray-800 rounded m-4'},JSON.stringify(data,null,2));
+}
+
+const PANELS={Dashboard,Chat,Tools,Sessions,Skills,Cron:CronPanel,Memory,Channels,MCP:McpPanel,Audit,Doctor,Config};
+
+function App(){
+  const[tab,setTab]=React.useState('Dashboard');
+  const Panel=PANELS[tab];
+  return e('div',{className:'flex flex-col h-screen'},
+    e('nav',{className:'flex bg-gray-800 overflow-x-auto'},TABS.map(t=>e('button',{key:t,className:'px-4 py-2 text-sm '+(t===tab?'bg-gray-700 text-white':'text-gray-400 hover:text-white'),onClick:()=>setTab(t)},t))),
+    e('main',{className:'flex-1 overflow-auto'},e(Panel))
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script>
+</body>
+</html>
