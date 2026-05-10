@@ -11,6 +11,7 @@ No cloud. No subscription. MIT.
 [![Node 22+](https://img.shields.io/badge/Node-22+-brightgreen.svg)](https://nodejs.org)
 [![Ollama friendly](https://img.shields.io/badge/Ollama-friendly-blue.svg)](https://ollama.com)
 [![Windows + Linux](https://img.shields.io/badge/OS-Windows%20%7C%20Linux-lightgrey.svg)]()
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/bkennedyshit)
 
 <!-- demo gif goes here on launch -->
 
@@ -399,6 +400,12 @@ Skills are portable — compatible with [agentskills.io](https://agentskills.io)
 - [**ChatRTX**](https://github.com/NVIDIA/ChatRTX) — the local GPU RAG pattern (shelved by NVIDIA 1/21/2026; Polymathes keeps that idea alive as a capability, not an app)
 - [**OpenCLIP**](https://github.com/mlfoundations/open_clip) — the embedding model family powering media-memory
 - [**Model Context Protocol**](https://modelcontextprotocol.io) — the integration standard
+
+---
+
+## Support
+
+Polymathes is MIT and always will be. If it's useful to you and you want to throw a few bucks at keeping it going, [**sponsor on GitHub**](https://github.com/sponsors/bkennedyshit). No pressure — stars, PRs, and feedback help just as much.
 
 ---
 
