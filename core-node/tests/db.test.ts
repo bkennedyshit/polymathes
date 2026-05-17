@@ -41,9 +41,11 @@ describe("db", () => {
   it("runMigrations is idempotent", () => {
     db = openDb(TEST_DB);
     runMigrations(db);
-    runMigrations(db); // should not throw
-    const versions = db.prepare("SELECT version FROM schema_version").all();
-    expect(versions).toHaveLength(1);
+    const before = db.prepare("SELECT version FROM schema_version").all().length;
+    runMigrations(db); // should not throw, should not add duplicates
+    const after = db.prepare("SELECT version FROM schema_version").all().length;
+    expect(after).toBe(before);
+    expect(after).toBeGreaterThanOrEqual(1);
   });
 
   it("audit table prevents UPDATE and DELETE", () => {

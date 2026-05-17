@@ -67,10 +67,17 @@ describe("buildSystemPrompt", () => {
       tools: [{ type: "function", function: { name: "search", description: "Search things", parameters: { type: "object" } } }],
       policyHints: ["Be safe"],
     });
+    // Identity is always present.
+    expect(prompt).toContain("Polymath");
+    // Soul (skill / context) is appended.
     expect(prompt).toContain("I am Polymath.");
-    expect(prompt).toContain("search: Search things");
+    // Policy hint is included.
     expect(prompt).toContain("Be safe");
+    // Final-answer rule is mentioned.
     expect(prompt).toContain("core.final_answer");
+    // Note: tool schemas are NOT dumped into the system prompt anymore —
+    // they're delivered through the native `tools` API param instead. So
+    // we deliberately do NOT assert the tool name appears in the prompt.
   });
 });
 

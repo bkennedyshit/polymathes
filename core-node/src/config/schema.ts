@@ -31,20 +31,27 @@ const SandboxSchema = z.object({
 const TelegramSchema = z.object({
   token: z.string().default(''),
   enabled: z.boolean().default(false),
+  allowed_users: z.array(z.string()).default([]),
+  home_channel: z.string().optional(),
 });
 
 const DiscordSchema = z.object({
   token: z.string().default(''),
   enabled: z.boolean().default(false),
+  allowed_users: z.array(z.string()).default([]),
 });
 
 const SignalSchema = z.object({
   enabled: z.boolean().default(false),
+  phone: z.string().optional(),
 });
 
 const EmailSchema = z.object({
   imap: z.string().default(''),
   smtp: z.string().default(''),
+  username: z.string().default(''),
+  password: z.string().default(''),
+  subject_prefix: z.string().default(''),
   enabled: z.boolean().default(false),
 });
 

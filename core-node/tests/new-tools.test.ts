@@ -214,20 +214,23 @@ describe("memory tools", () => {
   it("registers all memory tools", () => {
     const reg = new ToolRegistry();
     registerMemory(reg);
-    expect(reg.get("memory_recall")).toBeDefined();
-    expect(reg.get("memory_recall_session")).toBeDefined();
-    expect(reg.get("memory_recall_by_date")).toBeDefined();
-    expect(reg.get("memory_pin")).toBeDefined();
-    expect(reg.get("memory_forget")).toBeDefined();
-    expect(reg.get("memory_list_sessions")).toBeDefined();
+    // Tool names use dot-namespaced format. Underscore aliases were
+    // dropped during the memory layer v2 refactor.
+    expect(reg.get("memory.recall")).toBeDefined();
+    expect(reg.get("memory.note")).toBeDefined();
+    expect(reg.get("memory.pin")).toBeDefined();
+    expect(reg.get("memory.forget")).toBeDefined();
+    expect(reg.get("memory.session_history")).toBeDefined();
   });
 
-  it("memory_recall returns empty when no backend", async () => {
+  it("memory.recall returns empty when no backend", async () => {
     const reg = new ToolRegistry();
     registerMemory(reg);
-    const tool = reg.get("memory_recall")!;
+    const tool = reg.get("memory.recall")!;
     const result = (await tool.handler({ query: "test" }, null)) as any;
-    expect(result.results).toEqual([]);
+    // No backend wired — both fts and semantic should be empty.
+    expect(result.fts).toEqual([]);
+    expect(result.semantic).toEqual([]);
   });
 });
 

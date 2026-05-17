@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "_comment": "Path-inference rules shipped with Polymath. Users can override by writing ~/.polymath/path-rules.json (deep-merged at runtime). <brand> and other angle-bracket vars are pattern captures, NOT hardcoded names.",
+  "rules": [
+    { "match": "input/<brand>/raw/", "category": "raw", "intent": "agent-input" },
+    { "match": "input/<brand>/fixed/", "category": "color-corrected", "intent": "agent-input" },
+    { "match": "input/<brand>/", "category": "raw", "intent": "agent-input" },
+
+    { "match": "content/pinterest/<pin_type>/", "category": "pin", "metadata": { "pin_type": "$pin_type", "platform": "pinterest" } },
+    { "match": "content/pinterest/", "category": "pin", "metadata": { "platform": "pinterest" } },
+
+    { "match": "content/blog-images/<audience>/", "category": "blog-image", "metadata": { "audience": "$audience" } },
+    { "match": "content/blog-images/", "category": "blog-image" },
+    { "match": "content/generated-images/", "category": "ai-generated" },
+    { "match": "content/obs-recordings/", "category": "raw-recording", "intent": "agent-input" },
+
+    { "match": "content/<brand>/reels/", "category": "reel", "workflow_state": "ready-to-post", "warn_on_edit": true },
+    { "match": "content/<brand>/long-form/", "category": "long-form" },
+    { "match": "content/<brand>/static/", "category": "static-image" },
+    { "match": "content/<brand>/static-images/", "category": "static-image" },
+    { "match": "content/<brand>/talking-head/", "category": "long-form", "metadata": { "format": "talking-head" } },
+    { "match": "content/<brand>/", "category": "edited" },
+
+    { "match": "output/", "category": "agent-output" },
+    { "match": "cuts/", "category": "clip" },
+    { "match": "archive/<brand>/", "category": "archive" },
+    { "match": "archive/", "category": "archive" },
+    { "match": "content-music/", "category": "stock-asset", "metadata": { "kind_hint": "audio" } },
+    { "match": "video-scripts/", "category": "script", "metadata": { "kind_hint": "text" } }
+  ],
+  "skip_paths": [
+    "agent_brain/",
+    "skills/",
+    ".polymath/",
+    "logs/",
+    "projects-index/",
+    "node_modules/",
+    ".git/",
+    ".kiro/"
+  ],
+  "brand_aliases": {}
+}

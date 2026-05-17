@@ -20,6 +20,10 @@ export class ToolRegistry {
     this.tools.set(def.name, def);
   }
 
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   get(name: string): ToolDef | undefined {
     return this.tools.get(name);
   }

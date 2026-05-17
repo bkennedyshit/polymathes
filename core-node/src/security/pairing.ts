@@ -25,6 +25,28 @@ export class PairingManager {
     ).run(code);
   }
 
+  /**
+   * Pre-approve a sender without requiring a pairing code exchange.
+   * Used at boot for channels.<transport>.allowed_users.
+   * Creates a new approved row only when no prior approved row exists.
+   */
+  preApprove(channel: string, senderId: string): void {
+    const existing = this.db.prepare(
+      `SELECT status FROM pairings WHERE channel = ? AND sender_id = ? ORDER BY created_at DESC LIMIT 1`,
+    ).get(channel, senderId) as { status: string } | undefined;
+    if (existing?.status === "approved") return;
+    // If there's a pending row, flip it. Otherwise insert a fresh approved row.
+    if (existing?.status === "pending") {
+      this.db.prepare(
+        `UPDATE pairings SET status = 'approved', approved_at = datetime('now') WHERE channel = ? AND sender_id = ? AND status = 'pending'`,
+      ).run(channel, senderId);
+    } else {
+      this.db.prepare(
+        `INSERT INTO pairings (id, channel, sender_id, code, status, approved_at, created_at) VALUES (?, ?, ?, 'preapproved', 'approved', datetime('now'), datetime('now'))`,
+      ).run(ulid(), channel, senderId);
+    }
+  }
+
   denyPairing(code: string): void {
     this.db.prepare(`UPDATE pairings SET status = 'denied' WHERE code = ? AND status = 'pending'`).run(code);
   }

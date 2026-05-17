@@ -16,7 +16,7 @@ export class OpenAiAdapter implements LlmAdapter {
 
   async *complete(messages: ChatMessage[], tools: LlmTool[], opts?: CompletionOptions): AsyncIterable<ChatDelta> {
     const stream = opts?.stream ?? this.cfg.streaming ?? false;
-    const body: Record<string, unknown> = { model: this.cfg.model, messages, stream };
+    const body: Record<string, unknown> = { model: opts?.model ?? this.cfg.model, messages, stream };
     if (tools.length) body.tools = tools;
     if (opts?.temperature != null) body.temperature = opts.temperature;
     if (opts?.max_tokens != null) body.max_tokens = opts.max_tokens;

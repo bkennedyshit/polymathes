@@ -120,6 +120,27 @@ IMPLEMENTATION_STATUS.md
 !*.example.key
 
 # ============================================================================
+# User-authored skills (treat as private / commercial)
+# Skills live in ~/.polymath/skills by default, but block any accidental
+# in-repo skills/ folder so users or contributors don't publish their own
+# skill IP if they work from inside the repo.
+# ============================================================================
+skills/
+**/skills/
+!core-node/docs/skills/
+!website/docs/skills/
+
+# ============================================================================
+# Telegram / bot session state (run-time caches that might appear anywhere)
+# ============================================================================
+telegram_session*
+bot-data/
+**/bot-data/
+tg-*.json
+session.session
+session.session-journal
+
+# ============================================================================
 # Temporary archives
 # ============================================================================
 *.zip

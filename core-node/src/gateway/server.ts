@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ulid } from "ulid";
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, dirname, extname } from "node:path";
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { join, dirname, extname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { authMiddleware } from "./auth.js";
@@ -12,6 +12,21 @@ import type { SkillRegistry } from "../skills/registry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const startTime = Date.now();
+
+// Resolve the UI html across layouts:
+//   - src layout (tsx dev): src/gateway/server.ts -> ../ui/index.html
+//   - bundled (dist/polymath.cjs): dist/ -> ui/index.html (copied by build.mjs)
+function resolveUiHtml(): string {
+  const candidates = [
+    resolve(__dirname, "..", "ui", "index.html"),
+    resolve(__dirname, "ui", "index.html"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return readFileSync(p, "utf-8");
+  }
+  return "<!doctype html><h1>Polymath</h1><p>UI bundle not found. Run `pnpm build`.</p>";
+}
+const UI_HTML = resolveUiHtml();
 
 export interface CreateAppOpts {
   skillRegistry?: SkillRegistry;
@@ -38,9 +53,64 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     return c.json({ answer, sessionId });
   });
 
-  app.get("/api/tools", (c) => c.json(ctx.toolRegistry.schemas()));
+  // Enumerate available LLM models.
+  // For Ollama / LM Studio / OpenAI-compatible endpoints, probe /v1/models.
+  // Cloud providers: return well-known lists.
+  app.get("/api/models", async (c) => {
+    const provider = ctx.config.llm.provider;
+    const currentModel = ctx.config.llm.model;
+    const baseUrl = ctx.config.llm.base_url;
 
-  app.get("/api/sessions", (c) => c.json([]));
+    // Providers we can probe at runtime
+    const probeProviders = new Set(["ollama", "lmstudio", "openai", "openrouter", "groq", "together"]);
+    if (probeProviders.has(provider) && baseUrl) {
+      try {
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (ctx.config.llm.api_key) headers.authorization = `Bearer ${ctx.config.llm.api_key}`;
+        // Ollama exposes /v1/models but also /api/tags with richer info
+        const url = baseUrl.replace(/\/+$/, "") + "/models";
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(4000) });
+        if (res.ok) {
+          const data: any = await res.json();
+          const models = (data?.data ?? data?.models ?? [])
+            .map((m: any) => (typeof m === "string" ? m : m.id ?? m.name))
+            .filter(Boolean)
+            .sort();
+          return c.json({ provider, current: currentModel, models });
+        }
+      } catch { /* fall through to static list */ }
+    }
+
+    const staticLists: Record<string, string[]> = {
+      anthropic: ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"],
+      google: ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-1.5-pro"],
+      openai: ["gpt-4o", "gpt-4o-mini", "o1", "o1-mini"],
+    };
+    return c.json({ provider, current: currentModel, models: staticLists[provider] ?? [] });
+  });
+
+  // Hot-swap LLM provider/model without restart.
+  app.post("/api/settings/llm", async (c) => {
+    const body = await c.req.json<{ provider?: string; model?: string; base_url?: string; api_key?: string; temperature?: number }>();
+    if (body.provider) ctx.config.llm.provider = body.provider;
+    if (body.model) ctx.config.llm.model = body.model;
+    if (body.base_url !== undefined) ctx.config.llm.base_url = body.base_url;
+    if (body.api_key !== undefined) ctx.config.llm.api_key = body.api_key;
+    if (body.temperature !== undefined) ctx.config.llm.temperature = body.temperature;
+
+    // Persist to ~/.polymath/polymath.json and rebuild adapter
+    try {
+      const cfgPath = resolve(homedir(), ".polymath", "polymath.json");
+      writeFileSync(cfgPath, JSON.stringify(ctx.config, null, 2), "utf-8");
+    } catch { /* ignore persist failure */ }
+
+    // Rebuild the LLM adapter in place
+    if (typeof ctx.rebuildLlm === "function") ctx.rebuildLlm();
+
+    return c.json({ ok: true, provider: ctx.config.llm.provider, model: ctx.config.llm.model });
+  });
+
+  app.get("/api/tools", (c) => c.json(ctx.toolRegistry.schemas()));
 
   // Approvals
   app.get("/api/approvals", (c) => {
@@ -76,8 +146,12 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
 
   // UI
   app.get("/", (c) => {
-    const html = readFileSync(join(__dirname, "..", "ui", "index.html"), "utf-8");
-    return c.html(html);
+    // Serve with no-cache headers so UI updates during development don't get
+    // shadowed by the browser's disk cache. Cheap for a ~10KB html file.
+    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+    c.header("Pragma", "no-cache");
+    c.header("Expires", "0");
+    return c.html(UI_HTML);
   });
 
   // Skills
@@ -126,20 +200,146 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     return c.json(sanitized);
   });
 
-  // Doctor
-  app.get("/api/doctor", (c) => {
-    let dbStatus: "ok" | "error" = "error";
+  // Doctor — real diagnostic checks (replaces the legacy stub).
+  app.get("/api/doctor", async (c) => {
+    const checks: Array<{ label: string; status: string; latency_ms?: number; detail?: string }> = [];
+
+    // Gateway HTTP itself — if we can answer this we're up.
+    checks.push({ label: "Gateway HTTP", status: "ok" });
+
+    // Database integrity
     if (hasDb) {
-      try { ctx.db.prepare("SELECT 1").get(); dbStatus = "ok"; } catch { /* */ }
+      const t0 = Date.now();
+      try {
+        ctx.db.prepare("SELECT 1").get();
+        const integrity = ctx.db.pragma("integrity_check") as Array<{ integrity_check: string }>;
+        const okFlag = integrity[0]?.integrity_check === "ok";
+        checks.push({
+          label: "Database (SQLite)",
+          status: okFlag ? "ok" : "error",
+          latency_ms: Date.now() - t0,
+          detail: okFlag ? undefined : "integrity check failed",
+        });
+      } catch (e: any) {
+        checks.push({
+          label: "Database (SQLite)",
+          status: "error",
+          latency_ms: Date.now() - t0,
+          detail: e?.message ?? String(e),
+        });
+      }
+    } else {
+      checks.push({ label: "Database (SQLite)", status: "error", detail: "no database connected" });
     }
+
+    // LLM provider — try to list models.
+    {
+      const t0 = Date.now();
+      const baseUrl = ctx.config.llm.base_url;
+      if (!baseUrl) {
+        checks.push({ label: "LLM provider", status: "warn", detail: "no base_url configured" });
+      } else {
+        try {
+          const headers: Record<string, string> = {};
+          if (ctx.config.llm.api_key) headers.authorization = `Bearer ${ctx.config.llm.api_key}`;
+          const url = baseUrl.replace(/\/+$/, "") + "/models";
+          const r = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+          checks.push({
+            label: `LLM (${ctx.config.llm.provider})`,
+            status: r.ok ? "ok" : "error",
+            latency_ms: Date.now() - t0,
+            detail: r.ok ? `model: ${ctx.config.llm.model}` : `HTTP ${r.status}`,
+          });
+        } catch (e: any) {
+          checks.push({
+            label: `LLM (${ctx.config.llm.provider})`,
+            status: "error",
+            latency_ms: Date.now() - t0,
+            detail: e?.message ?? String(e),
+          });
+        }
+      }
+    }
+
+    // Embedder — only meaningful for local providers.
+    if (ctx.config.llm.provider === "ollama" || ctx.config.llm.provider === "lmstudio") {
+      const t0 = Date.now();
+      try {
+        const ollamaApi = (ctx.config.llm.base_url ?? "").replace(/\/v1\/?$/, "");
+        const r = await fetch(ollamaApi + "/api/embeddings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: ctx.config.memory.embedding_model || "nomic-embed-text",
+            prompt: "doctor",
+          }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        const body: any = r.ok ? await r.json() : null;
+        const haveVec = Array.isArray(body?.embedding) && body.embedding.length > 0;
+        checks.push({
+          label: "Embedder",
+          status: haveVec ? "ok" : "error",
+          latency_ms: Date.now() - t0,
+          detail: haveVec
+            ? `dim ${body.embedding.length}, model ${ctx.config.memory.embedding_model || "nomic-embed-text"}`
+            : "no embedding returned (model may not be pulled)",
+        });
+      } catch (e: any) {
+        checks.push({
+          label: "Embedder",
+          status: "error",
+          latency_ms: Date.now() - t0,
+          detail: e?.message ?? String(e),
+        });
+      }
+    } else {
+      checks.push({ label: "Embedder", status: "warn", detail: "non-local provider; embeddings disabled" });
+    }
+
+    // MCP servers
     const mcpServers = (ctx.mcpRegistry as any).listServers?.() ?? [];
+    for (const s of mcpServers) {
+      checks.push({
+        label: `MCP: ${s.name}`,
+        status: s.health === "connected" ? "ok" : "error",
+        detail: `${s.tools} tools`,
+      });
+    }
+    if (mcpServers.length === 0) {
+      checks.push({ label: "MCP servers", status: "warn", detail: "none configured" });
+    }
+
+    // Tool registry sanity
+    const toolCount = ctx.toolRegistry.list().length;
+    checks.push({
+      label: "Tool registry",
+      status: toolCount > 0 ? "ok" : "error",
+      detail: `${toolCount} tools registered`,
+    });
+
+    // Disk space — best effort.
+    try {
+      const { statfsSync } = await import("node:fs");
+      const stats: any = statfsSync(homedir());
+      const freeMb = Math.round((stats.bavail * stats.bsize) / 1024 / 1024);
+      checks.push({
+        label: "Disk space (HOME)",
+        status: freeMb > 1024 ? "ok" : "warn",
+        detail: `${freeMb} MB free`,
+      });
+    } catch {
+      checks.push({ label: "Disk space (HOME)", status: "warn", detail: "statfs unavailable" });
+    }
+
     return c.json({
       gateway: "ok",
-      db: dbStatus,
-      llm: "unchecked",
+      db: hasDb ? "ok" : "error",
+      llm: checks.find((c) => c.label.startsWith("LLM"))?.status ?? "unchecked",
       mcp_servers: mcpServers,
-      tools: ctx.toolRegistry.list().length,
+      tools: toolCount,
       uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+      checks,
     });
   });
 
@@ -177,7 +377,373 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     const filePath = join(dir, `${id}${ext}`);
     const buf = Buffer.from(await file.arrayBuffer());
     writeFileSync(filePath, buf);
-    return c.json({ path: filePath });
+    return c.json({ id, path: filePath, size: buf.length, name: file.name });
+  });
+
+  // ==========================================================
+  // Streaming chat over SSE — emits iteration/tool_call/tool_result/final events
+  // ==========================================================
+  app.post("/api/chat/stream", async (c) => {
+    const body = await c.req.json<{ sessionId?: string; text: string }>();
+    const sessionId = body.sessionId ?? ulid();
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        const send = (evt: string, data: any) => {
+          try {
+            controller.enqueue(encoder.encode(`event: ${evt}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch { /* controller closed */ }
+        };
+        send("session", { sessionId });
+
+        try {
+          const answer = await ctx.runTask(body.text, sessionId, (ev: any) => {
+            send(ev.type, ev);
+          });
+          send("done", { sessionId, answer });
+        } catch (e: any) {
+          send("error", { error: e?.message ?? String(e) });
+        } finally {
+          try { controller.close(); } catch { /* */ }
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  });
+
+  // ==========================================================
+  // Memory — search + stats + session detail
+  // ==========================================================
+  app.get("/api/memory/stats", (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    try {
+      const episodic = (ctx.db.prepare("SELECT COUNT(*) as n FROM episodic").get() as any).n;
+      const sessions = (ctx.db.prepare("SELECT COUNT(*) as n FROM sessions").get() as any).n;
+      const semantic = (ctx.db.prepare("SELECT COUNT(*) as n FROM semantic").get() as any).n;
+      const tools = (ctx.db.prepare("SELECT COUNT(*) as n FROM audit").get() as any).n;
+      return c.json({ episodic, sessions, semantic, tool_calls: tools });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/memory/search", (c) => {
+    if (!hasDb) return c.json([]);
+    const q = c.req.query("q") || "";
+    const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+    if (!q.trim()) return c.json([]);
+    try {
+      const results = ctx.episodicMemory.recall(q, limit);
+      return c.json(results);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/memory/session/:id", (c) => {
+    if (!hasDb) return c.json([]);
+    const id = c.req.param("id");
+    const limit = Math.min(parseInt(c.req.query("limit") || "200", 10), 500);
+    try {
+      const rows = ctx.episodicMemory.recallBySession(id, limit);
+      return c.json(rows);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/memory/recent", (c) => {
+    if (!hasDb) return c.json([]);
+    const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+    try {
+      const rows = ctx.db.prepare("SELECT * FROM episodic ORDER BY created_at DESC LIMIT ?").all(limit);
+      return c.json(rows);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/memory/semantic", (c) => {
+    if (!hasDb) return c.json([]);
+    const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+    try {
+      const rows = ctx.db.prepare("SELECT id, content, pinned, created_at FROM semantic ORDER BY pinned DESC, created_at DESC LIMIT ?").all(limit);
+      return c.json(rows);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  /**
+   * Recent consolidation events — sessions that have been compressed into
+   * semantic memory. Joins to a count of semantic facts written from each
+   * source session so the Memory UI can show "session X → 5 facts".
+   */
+  app.get("/api/memory/consolidations", (c) => {
+    if (!hasDb) return c.json([]);
+    const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+    try {
+      const rows = ctx.db.prepare(`
+        SELECT
+          s.id as session_id,
+          s.consolidated_at,
+          s.created_at as session_started_at,
+          (SELECT COUNT(*) FROM episodic e WHERE e.session_id = s.id) as turn_count,
+          (SELECT COUNT(*) FROM episodic e WHERE e.session_id = s.id AND e.compressed_at IS NOT NULL) as compressed_count,
+          (SELECT COUNT(*) FROM semantic se WHERE se.source_session = s.id) as facts_count
+        FROM sessions s
+        WHERE s.consolidated_at IS NOT NULL
+        ORDER BY s.consolidated_at DESC
+        LIMIT ?
+      `).all(limit);
+      return c.json(rows);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  // Override the real sessions list (the stub above returned []).
+  app.get("/api/sessions", (c) => {
+    if (!hasDb) return c.json([]);
+    try {
+      const rows = ctx.db.prepare(`
+        SELECT s.id, s.agent_id, s.channel, s.created_at, s.updated_at,
+               (SELECT COUNT(*) FROM episodic e WHERE e.session_id = s.id) as msg_count,
+               (SELECT MAX(created_at) FROM episodic e WHERE e.session_id = s.id) as last_message_at
+        FROM sessions s
+        ORDER BY COALESCE(last_message_at, s.updated_at) DESC
+        LIMIT 100
+      `).all();
+      return c.json(rows);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.delete("/api/sessions/:id", (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    const id = c.req.param("id");
+    try {
+      ctx.db.prepare("DELETE FROM episodic WHERE session_id = ?").run(id);
+      ctx.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+      return c.json({ ok: true, id });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  // ==========================================================
+  // Skills — search / install / uninstall / reload
+  // ==========================================================
+  app.get("/api/skills/search", async (c) => {
+    const q = c.req.query("q") || "";
+    try {
+      const { searchSkills } = await import("../skills/hub.js");
+      const result = await searchSkills(q);
+      if (typeof result === "string") return c.json({ error: result }, 500);
+      return c.json(result);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.post("/api/skills/install", async (c) => {
+    const body = await c.req.json<{ name: string }>();
+    if (!body?.name) return c.json({ error: "name required" }, 400);
+    try {
+      const { installSkill } = await import("../skills/hub.js");
+      const msg = await installSkill(body.name, ctx.config.runtime.home_dir.replace(/^~/, homedir()));
+      // Reload skills so the new one registers as a tool.
+      if (typeof (ctx as any).reloadSkills === "function") (ctx as any).reloadSkills();
+      return c.json({ ok: true, message: msg });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.delete("/api/skills/:name", async (c) => {
+    const name = c.req.param("name");
+    try {
+      const { rmSync } = await import("node:fs");
+      const dir = join(ctx.config.runtime.home_dir.replace(/^~/, homedir()), "skills", name);
+      rmSync(dir, { recursive: true, force: true });
+      if (typeof (ctx as any).reloadSkills === "function") (ctx as any).reloadSkills();
+      return c.json({ ok: true, name });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.post("/api/skills/reload", (c) => {
+    if (typeof (ctx as any).reloadSkills === "function") (ctx as any).reloadSkills();
+    return c.json({ ok: true, count: opts?.skillRegistry?.list().length ?? 0 });
+  });
+
+  // ==========================================================
+  // Media catalog REST surface (Media UI tab + scriptable access)
+  // ==========================================================
+  app.get("/api/media/stats", async (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    try {
+      const { MediaEpisodic } = await import("../memory/media_episodic.js");
+      const ep = new MediaEpisodic(ctx.db);
+      return c.json(ep.stats());
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/media", async (c) => {
+    if (!hasDb) return c.json([]);
+    try {
+      const { MediaEpisodic } = await import("../memory/media_episodic.js");
+      const ep = new MediaEpisodic(ctx.db);
+      const filter = {
+        brand: c.req.query("brand") ?? undefined,
+        category: c.req.query("category") ?? undefined,
+        kind: c.req.query("kind") ?? undefined,
+        intent: c.req.query("intent") ?? undefined,
+        path_glob: c.req.query("path_glob") ?? undefined,
+        min_duration_sec: c.req.query("min_duration_sec") ? parseFloat(c.req.query("min_duration_sec")!) : undefined,
+        max_duration_sec: c.req.query("max_duration_sec") ? parseFloat(c.req.query("max_duration_sec")!) : undefined,
+        modified_after: c.req.query("modified_after") ?? undefined,
+        modified_before: c.req.query("modified_before") ?? undefined,
+        limit: c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 100,
+      };
+      return c.json(ep.query(filter));
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/media/:id", async (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    try {
+      const { MediaEpisodic } = await import("../memory/media_episodic.js");
+      const ep = new MediaEpisodic(ctx.db);
+      const item = ep.getById(c.req.param("id"));
+      if (!item) return c.json({ error: "not found" }, 404);
+      return c.json(item);
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/media/:id/pipeline", async (c) => {
+    if (!hasDb) return c.json([]);
+    try {
+      const { MediaWorkflow } = await import("../memory/media_workflow.js");
+      const wf = new MediaWorkflow(ctx.db);
+      return c.json(wf.pipelineFor(c.req.param("id")));
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/media/unposted/:step", async (c) => {
+    if (!hasDb) return c.json({ source_ids: [] });
+    try {
+      const { MediaWorkflow } = await import("../memory/media_workflow.js");
+      const wf = new MediaWorkflow(ctx.db);
+      const ids = wf.sourcesMissingStep(c.req.param("step"), {
+        brand: c.req.query("brand") ?? undefined,
+        category: c.req.query("category") ?? undefined,
+        limit: c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 50,
+      });
+      return c.json({ source_ids: ids });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  // ==========================================================
+  // MCP server management — add / remove / test
+  // ==========================================================
+  app.post("/api/mcp", async (c) => {
+    const body = await c.req.json<{ name: string; command: string; args?: string[]; env?: Record<string, string> }>();
+    if (!body?.name || !body?.command) return c.json({ error: "name + command required" }, 400);
+
+    // Persist to config
+    const newServer = { name: body.name, command: body.command, args: body.args ?? [], env: body.env };
+    const existing = ctx.config.mcp_servers.findIndex((s) => s.name === body.name);
+    if (existing >= 0) ctx.config.mcp_servers[existing] = newServer as any;
+    else ctx.config.mcp_servers.push(newServer as any);
+
+    try {
+      const cfgPath = resolve(homedir(), ".polymath", "polymath.json");
+      writeFileSync(cfgPath, JSON.stringify(ctx.config, null, 2), "utf-8");
+    } catch { /* ignore */ }
+
+    // Start/restart the server
+    try {
+      await (ctx.mcpRegistry as any).stop?.(body.name);
+    } catch { /* ignore */ }
+    try {
+      await (ctx.mcpRegistry as any).start?.(newServer);
+      return c.json({ ok: true, name: body.name });
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
+    }
+  });
+
+  app.delete("/api/mcp/:name", async (c) => {
+    const name = c.req.param("name");
+    const idx = ctx.config.mcp_servers.findIndex((s) => s.name === name);
+    if (idx < 0) return c.json({ error: "not found" }, 404);
+    ctx.config.mcp_servers.splice(idx, 1);
+
+    try {
+      const cfgPath = resolve(homedir(), ".polymath", "polymath.json");
+      writeFileSync(cfgPath, JSON.stringify(ctx.config, null, 2), "utf-8");
+    } catch { /* ignore */ }
+
+    try { await (ctx.mcpRegistry as any).stop?.(name); } catch { /* */ }
+    return c.json({ ok: true, name });
+  });
+
+  // ==========================================================
+  // Channel / transport configuration
+  // ==========================================================
+  app.post("/api/settings/channels", async (c) => {
+    const body = await c.req.json<any>();
+    // Merge only known keys onto config.channels.
+    const ch = ctx.config.channels;
+    if (body.telegram) ch.telegram = { ...ch.telegram, ...body.telegram };
+    if (body.discord) ch.discord = { ...ch.discord, ...body.discord };
+    if (body.signal) ch.signal = { ...ch.signal, ...body.signal };
+    if (body.email) ch.email = { ...ch.email, ...body.email };
+    if (body.webchat) ch.webchat = { ...ch.webchat, ...body.webchat };
+
+    try {
+      const cfgPath = resolve(homedir(), ".polymath", "polymath.json");
+      writeFileSync(cfgPath, JSON.stringify(ctx.config, null, 2), "utf-8");
+    } catch { /* ignore */ }
+
+    return c.json({ ok: true, channels: ch, note: "Restart the gateway to connect newly-enabled transports." });
+  });
+
+  // ==========================================================
+  // Quick actions — trigger a builtin or MCP tool directly
+  // ==========================================================
+  app.post("/api/actions/invoke", async (c) => {
+    const body = await c.req.json<{ tool: string; args?: any; sessionId?: string }>();
+    if (!body?.tool) return c.json({ error: "tool required" }, 400);
+    try {
+      const sid = body.sessionId || `ui-${ulid()}`;
+      const result = await ctx.toolRouter.invoke(body.tool, body.args ?? {}, { sessionId: sid });
+      return c.json({ ok: true, result });
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
+    }
+  });
+
+  // ==========================================================
+  // GPU Broker — state, claim, release, evacuate
+  // ==========================================================
+  app.get("/api/gpu/state", (c) => {
+    if (!(ctx as any).gpuBroker) return c.json({ dormant: true });
+    return c.json((ctx as any).gpuBroker.getState());
+  });
+
+  app.post("/api/gpu/claim", async (c) => {
+    if (!(ctx as any).gpuBroker) return c.json({ ok: false, error: "broker dormant" }, 400);
+    const body = await c.req.json<{ owner: string; reason?: string; hold_minutes?: number; vram_gb?: number }>();
+    const res = await (ctx as any).gpuBroker.claim({
+      owner: body.owner ?? "unknown",
+      reason: body.reason,
+      holdMs: body.hold_minutes ? body.hold_minutes * 60 * 1000 : undefined,
+      vramNeededMb: body.vram_gb ? body.vram_gb * 1024 : undefined,
+    });
+    return c.json(res);
+  });
+
+  app.post("/api/gpu/release", async (c) => {
+    if (!(ctx as any).gpuBroker) return c.json({ ok: true });
+    const body = await c.req.json<{ token: string }>();
+    return c.json(await (ctx as any).gpuBroker.release(body.token));
+  });
+
+  app.post("/api/gpu/evacuate", async (c) => {
+    if (!(ctx as any).gpuBroker) return c.json({ ok: true });
+    await (ctx as any).gpuBroker.evacuateOllama();
+    return c.json({ ok: true });
   });
 
   return app;

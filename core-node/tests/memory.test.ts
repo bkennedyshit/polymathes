@@ -1,22 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { runMigrations } from "../src/db/migrate.js";
 import { WorkingMemory } from "../src/memory/working.js";
 import { EpisodicMemory } from "../src/memory/episodic.js";
 import { SemanticMemory } from "../src/memory/semantic.js";
 import { hybridRecall } from "../src/memory/hybrid_recall.js";
 import { consolidateSession } from "../src/memory/consolidator.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const INIT_SQL = readFileSync(resolve(__dirname, "../src/db/migrations/0001_init.sql"), "utf-8");
-
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(INIT_SQL);
+  runMigrations(db);
   return db;
 }
 
@@ -171,8 +166,11 @@ describe("consolidateSession", () => {
   afterEach(() => db.close());
 
   it("stores summary and facts from LLM response", async () => {
+    // Need at least 4 messages to clear the minMessages threshold.
     em.store("sess1", "user", "How do I train a model?");
     em.store("sess1", "assistant", "Use pytorch with a dataloader.");
+    em.store("sess1", "user", "What batch size?");
+    em.store("sess1", "assistant", "Start with 32 and tune from there.");
 
     const mockLlm = {
       async chat() {
@@ -184,15 +182,105 @@ describe("consolidateSession", () => {
       },
     };
 
-    await consolidateSession("sess1", {
+    // Stub embedder that returns a deterministic vector for every call.
+    // Real consolidator skips entries whose embedding is null, so we must
+    // return a non-null Float32Array here.
+    const stubEmbedder = {
+      name: "stub",
+      dim: 3,
+      async embed() { return new Float32Array([0.1, 0.2, 0.3]); },
+      async embedBatch(texts: string[]) {
+        return texts.map(() => new Float32Array([0.1, 0.2, 0.3]));
+      },
+    };
+
+    const result = await consolidateSession("sess1", {
       llmAdapter: mockLlm,
       episodic: em,
       semantic: sm,
-      config: { embeddingDim: 3 },
+      embedder: stubEmbedder,
     });
 
-    const rows = db.prepare("SELECT * FROM semantic").all() as any[];
+    expect(result.status).toBe("ok");
+    expect(result.facts_stored).toBe(3);
+
+    const rows = db.prepare("SELECT * FROM semantic ORDER BY rowid").all() as any[];
     expect(rows).toHaveLength(3); // 1 summary + 2 facts
     expect(rows[0].content).toBe("User asked about model training.");
+  });
+
+  it("skips storage when embedder returns null (avoids zero-vector pollution)", async () => {
+    em.store("sess1", "user", "test");
+    em.store("sess1", "assistant", "ok");
+    em.store("sess1", "user", "again");
+    em.store("sess1", "assistant", "ok");
+
+    const mockLlm = {
+      async chat() {
+        return JSON.stringify({
+          summary: "Short exchange.",
+          atomic_facts: ["Fact one"],
+        });
+      },
+    };
+
+    const nullEmbedder = {
+      name: "null",
+      dim: 3,
+      async embed() { return null; },
+      async embedBatch(texts: string[]) { return texts.map(() => null); },
+    };
+
+    const result = await consolidateSession("sess1", {
+      llmAdapter: mockLlm,
+      episodic: em,
+      semantic: sm,
+      embedder: nullEmbedder,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.facts_stored).toBe(0);
+    const rows = db.prepare("SELECT * FROM semantic").all();
+    expect(rows).toHaveLength(0);
+  });
+
+  it("mid-session compression marks oldest N as compressed_at and keeps newer turns visible", async () => {
+    // 10 turns total
+    for (let i = 0; i < 5; i++) {
+      em.store("sess1", "user", `q${i}`);
+      em.store("sess1", "assistant", `a${i}`);
+    }
+
+    const stubEmbedder = {
+      name: "stub",
+      dim: 3,
+      async embed() { return new Float32Array([0.1, 0.2, 0.3]); },
+      async embedBatch(texts: string[]) {
+        return texts.map(() => new Float32Array([0.1, 0.2, 0.3]));
+      },
+    };
+    const mockLlm = {
+      async chat() {
+        return JSON.stringify({
+          summary: "Early-session topic.",
+          atomic_facts: ["fact A", "fact B"],
+        });
+      },
+    };
+
+    const result = await consolidateSession("sess1", {
+      llmAdapter: mockLlm,
+      episodic: em,
+      semantic: sm,
+      embedder: stubEmbedder,
+      compressOldestN: 4,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.compressed_count).toBe(4);
+    // Only oldest 4 should be marked. recallBySession (default) returns 6 visible turns.
+    expect(em.recallBySession("sess1")).toHaveLength(6);
+    // includeCompressed=true returns all 10.
+    expect(em.recallBySession("sess1", 100, { includeCompressed: true })).toHaveLength(10);
   });
 });

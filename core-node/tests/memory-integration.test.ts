@@ -1,21 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { runMigrations } from "../src/db/migrate.js";
 import { EpisodicMemory } from "../src/memory/episodic.js";
 import { SemanticMemory } from "../src/memory/semantic.js";
 import { consolidateSession } from "../src/memory/consolidator.js";
 import { hybridRecall } from "../src/memory/hybrid_recall.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const INIT_SQL = readFileSync(resolve(__dirname, "../src/db/migrations/0001_init.sql"), "utf-8");
-
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(INIT_SQL);
+  runMigrations(db);
   return db;
 }
 
@@ -53,11 +48,21 @@ describe("Memory integration", () => {
       },
     };
 
+    // Stub embedder so we don't need Ollama running.
+    const stubEmbedder = {
+      name: "stub",
+      dim: 3,
+      async embed() { return new Float32Array([1, 0, 0]); },
+      async embedBatch(texts: string[]) {
+        return texts.map(() => new Float32Array([1, 0, 0]));
+      },
+    };
+
     await consolidateSession("int-sess", {
       llmAdapter: mockLlm,
       episodic,
       semantic,
-      config: { embeddingDim: 3 },
+      embedder: stubEmbedder,
     });
 
     // Verify semantic entries exist

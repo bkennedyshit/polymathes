@@ -30,6 +30,23 @@ export class McpRegistry {
     await Promise.allSettled(configs.map(cfg => this.startOne(cfg)));
   }
 
+  /** Public entry point used by /api/mcp add/update flows. */
+  async start(cfg: McpServerConfig): Promise<void> {
+    await this.startOne(cfg);
+  }
+
+  /** Stop a single server and remove it from the registry. */
+  async stop(name: string): Promise<boolean> {
+    const client = this.clients.get(name);
+    if (!client) return false;
+    try { await client.shutdown(); } catch { /* ignore */ }
+    this.clients.delete(name);
+    this.handles.delete(name);
+    this.configs.delete(name);
+    this.restartCounts.delete(name);
+    return true;
+  }
+
   private async startOne(cfg: McpServerConfig): Promise<void> {
     this.configs.set(cfg.name, cfg);
     const client = new McpCapabilityClient();

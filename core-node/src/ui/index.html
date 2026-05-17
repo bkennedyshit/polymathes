@@ -4,172 +4,1462 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Polymath Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={darkMode:'class'}</script>
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-<div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-const e=React.createElement;
-const TABS=['Dashboard','Chat','Tools','Sessions','Skills','Cron','Memory','Channels','MCP','Audit','Doctor','Config'];
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: {
+    fontFamily: {
+      sans: ['Inter', 'system-ui', 'sans-serif'],
+      mono: ['JetBrains Mono', 'monospace'],
+    },
+    colors: {
+      bg: { 900: '#0a0a0b', 800: '#111113', 700: '#1a1a1d', 600: '#242428', 500: '#2d2d32' },
+      accent: { DEFAULT: '#a78bfa', hover: '#c4b5fd', dim: '#7c3aed', darker: '#6d28d9' },
+    },
+  } },
+};
+</script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #555; }
+  .chat-msg h1, .chat-msg h2, .chat-msg h3 { font-weight: 600; margin: 0.5em 0 0.3em; }
+  .chat-msg h1 { font-size: 1.2em; }
+  .chat-msg h2 { font-size: 1.1em; }
+  .chat-msg p { margin: 0.3em 0; }
+  .chat-msg ul, .chat-msg ol { margin: 0.3em 0; padding-left: 1.3em; }
+  .chat-msg li { margin: 0.15em 0; }
+  .chat-msg code { background: #242428; padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 0.9em; }
+  .chat-msg pre { background: #0a0a0b; padding: 10px 14px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; border: 1px solid #242428; }
+  .chat-msg pre code { background: transparent; padding: 0; }
+  .chat-msg a { color: #a78bfa; text-decoration: underline; }
+  .chat-msg blockquote { border-left: 3px solid #7c3aed; padding-left: 10px; margin: 0.5em 0; color: #9ca3af; }
+  .pulse-dot { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .greek-title { font-family: 'Inter', system-ui; letter-spacing: 0.02em; }
+  details[open] > summary .arrow { transform: rotate(90deg); }
+  .arrow { transition: transform 0.15s ease; }
+  .toast { animation: slideIn 0.2s ease-out; }
+  @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+</head>
+<body class="bg-bg-900 text-gray-100 min-h-screen scrollbar-thin">
+<div id="root"></div>
+<div id="toast-root" class="fixed bottom-4 right-4 z-[100] space-y-2"></div>
+<script>
+const e = React.createElement;
 
-function getToken(){
-  let t=localStorage.getItem('polymath_token');
-  if(!t){t=prompt('Enter bearer token:');if(t)localStorage.setItem('polymath_token',t);}
-  return t||'';
+function getToken() {
+  let t = localStorage.getItem('polymath_token');
+  if (!t) { t = prompt('Enter bearer token:'); if (t) localStorage.setItem('polymath_token', t); }
+  return t || '';
 }
-const TOKEN=getToken();
-const hdrs={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'};
+const TOKEN = getToken();
+const authHdr = { 'Authorization': 'Bearer ' + TOKEN };
+const jsonHdrs = { ...authHdr, 'Content-Type': 'application/json' };
 
-function useFetch(url){
-  const[data,setData]=React.useState(null);
-  React.useEffect(()=>{fetch(url,{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData([]))},[url]);
-  return data;
+async function api(path, init) {
+  const opts = { ...init, headers: { ...(init?.body ? jsonHdrs : authHdr), ...(init?.headers || {}) } };
+  const res = await fetch(path, opts);
+  if (!res.ok) { let msg = res.status + ' ' + res.statusText; try { const j = await res.json(); msg = j.error || msg; } catch {} throw new Error(msg); }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? res.json() : res.text();
 }
 
-function Dashboard(){
-  const[data,setData]=React.useState(null);
-  const[audit,setAudit]=React.useState(null);
-  React.useEffect(()=>{
-    fetch('/api/doctor',{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData({}));
-    fetch('/api/audit',{headers:hdrs}).then(r=>r.json()).then(d=>setAudit((d||[]).slice(0,5))).catch(()=>setAudit([]));
-  },[]);
-  if(!data)return e('p',null,'Loading...');
-  return e('div',{className:'p-4 space-y-4'},
-    e('div',{className:'grid grid-cols-2 md:grid-cols-4 gap-4'},
-      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'Uptime'),e('div',{className:'text-2xl'},data.uptime_seconds!=null?data.uptime_seconds+'s':'—')),
-      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'Tools'),e('div',{className:'text-2xl'},data.tools??'—')),
-      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'DB'),e('div',{className:'text-2xl'},data.db??'—')),
-      e('div',{className:'bg-gray-800 p-4 rounded'},e('div',{className:'text-gray-400 text-xs'},'MCP Servers'),e('div',{className:'text-2xl'},(data.mcp_servers||[]).length))
+function useFetch(url, deps = []) {
+  const [data, setData] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+  const reload = React.useCallback(() => { setData(null); api(url).then(setData).catch(x => { setErr(x.message); setData([]); }); }, [url]);
+  React.useEffect(() => { reload(); }, [reload, ...deps]);
+  return [data, err, reload];
+}
+
+// ---------- Toast ----------
+let toastId = 0;
+function toast(msg, kind = 'info') {
+  const id = ++toastId;
+  const root = document.getElementById('toast-root');
+  const div = document.createElement('div');
+  const color = kind === 'error' ? 'bg-red-900 border-red-700 text-red-100' :
+                kind === 'success' ? 'bg-green-900 border-green-700 text-green-100' :
+                'bg-bg-700 border-bg-600 text-gray-100';
+  div.className = 'toast px-4 py-2 rounded-lg border text-sm shadow-lg ' + color;
+  div.textContent = msg;
+  div.dataset.id = id;
+  root.appendChild(div);
+  setTimeout(() => { div.style.opacity = '0'; div.style.transition = 'opacity 0.3s'; setTimeout(() => div.remove(), 300); }, 3500);
+}
+
+// ---------- Icons ----------
+const svg = (d) => (p) => e('svg', { ...p, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', className: (p?.className || '') + ' w-5 h-5' }, d);
+const Icon = {
+  Chat: svg([e('path', { key: 1, d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' })]),
+  Dashboard: svg([e('rect', { key: 1, x: 3, y: 3, width: 7, height: 9 }), e('rect', { key: 2, x: 14, y: 3, width: 7, height: 5 }), e('rect', { key: 3, x: 14, y: 12, width: 7, height: 9 }), e('rect', { key: 4, x: 3, y: 16, width: 7, height: 5 })]),
+  Tools: svg([e('path', { key: 1, d: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z' })]),
+  Sessions: svg([e('path', { key: 1, d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }), e('line', { key: 2, x1: 9, y1: 10, x2: 15, y2: 10 })]),
+  Skills: svg([e('polygon', { key: 1, points: '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2' })]),
+  Cron: svg([e('circle', { key: 1, cx: 12, cy: 12, r: 10 }), e('polyline', { key: 2, points: '12 6 12 12 16 14' })]),
+  Memory: svg([e('path', { key: 1, d: 'M9 3v2m6-2v2M9 19v2m6-2v2M3 9h2m-2 6h2m14-6h2m-2 6h2M6 6h12v12H6z' })]),
+  Channels: svg([e('path', { key: 1, d: 'M4 4h16v12H5.17L4 17.17V4m0-2a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z' })]),
+  Mcp: svg([e('path', { key: 1, d: 'M22 12h-4l-3 9L9 3l-3 9H2' })]),
+  Audit: svg([e('path', { key: 1, d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }), e('polyline', { key: 2, points: '14 2 14 8 20 8' })]),
+  Doctor: svg([e('path', { key: 1, d: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z' })]),
+  Settings: svg([e('circle', { key: 1, cx: 12, cy: 12, r: 3 }), e('path', { key: 2, d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' })]),
+  Plus: svg([e('line', { key: 1, x1: 12, y1: 5, x2: 12, y2: 19 }), e('line', { key: 2, x1: 5, y1: 12, x2: 19, y2: 12 })]),
+  Trash: svg([e('polyline', { key: 1, points: '3 6 5 6 21 6' }), e('path', { key: 2, d: 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' })]),
+  Play: svg([e('polygon', { key: 1, points: '5 3 19 12 5 21 5 3' })]),
+  Search: svg([e('circle', { key: 1, cx: 11, cy: 11, r: 8 }), e('line', { key: 2, x1: 21, y1: 21, x2: 16.65, y2: 16.65 })]),
+  Paperclip: svg([e('path', { key: 1, d: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48' })]),
+  Wrench: svg([e('path', { key: 1, d: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z' })]),
+};
+
+const NAV = [
+  { id: 'Chat', label: 'Chat', icon: Icon.Chat },
+  { id: 'Dashboard', label: 'Dashboard', icon: Icon.Dashboard },
+  { id: 'Tools', label: 'Tools', icon: Icon.Tools },
+  { id: 'Sessions', label: 'Sessions', icon: Icon.Sessions },
+  { id: 'Skills', label: 'Skills', icon: Icon.Skills },
+  { id: 'Memory', label: 'Memory', icon: Icon.Memory },
+  { id: 'Media', label: 'Media', icon: Icon.Skills },
+  { id: 'Cron', label: 'Cron', icon: Icon.Cron },
+  { id: 'Channels', label: 'Channels', icon: Icon.Channels },
+  { id: 'MCP', label: 'MCP', icon: Icon.Mcp },
+  { id: 'GPU', label: 'GPU', icon: Icon.Cron },
+  { id: 'Audit', label: 'Audit', icon: Icon.Audit },
+  { id: 'Doctor', label: 'Doctor', icon: Icon.Doctor },
+  { id: 'Settings', label: 'Settings', icon: Icon.Settings },
+];
+
+// ---------- Header/logo ----------
+function Logo() {
+  return e('div', { className: 'flex items-center gap-3 px-4 py-4 border-b border-bg-700' },
+    e('div', { className: 'w-9 h-9 rounded-lg bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center font-bold text-lg text-bg-900' }, 'Π'),
+    e('div', { className: 'flex flex-col' },
+      e('span', { className: 'greek-title text-lg font-semibold leading-tight' }, 'Polymath'),
+      e('span', { className: 'text-[10px] text-gray-500 mono leading-tight' }, 'Πολυμαθής · v0.1.0')
+    )
+  );
+}
+
+function StatusBar({ doctor }) {
+  if (!doctor) return null;
+  const mcp = doctor.mcp_servers || [];
+  const mcpUp = mcp.filter(s => s.health === 'connected').length;
+  const allGood = doctor.gateway === 'ok' && doctor.db === 'ok' && mcpUp === mcp.length;
+  return e('div', { className: 'flex items-center gap-3 px-4 py-2 border-t border-bg-700 text-[11px] mono text-gray-400' },
+    e('span', { className: 'flex items-center gap-1' }, e('span', { className: 'w-2 h-2 rounded-full pulse-dot ' + (allGood ? 'bg-green-500' : 'bg-yellow-500') }), allGood ? 'healthy' : 'degraded'),
+    e('span', null, '·'),
+    e('span', null, doctor.tools, ' tools'),
+    e('span', null, '·'),
+    e('span', null, mcpUp, '/', mcp.length, ' mcp'),
+    e('span', null, '·'),
+    e('span', null, Math.floor(doctor.uptime_seconds / 60), 'm up')
+  );
+}
+
+// ---------- Model picker (top right) ----------
+function ModelPicker({ current, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const [data, setData] = React.useState(null);
+  React.useEffect(() => { if (open) api('/api/models').then(setData).catch(() => setData({ models: [] })); }, [open]);
+  return e('div', { className: 'relative' },
+    e('button', {
+      className: 'flex items-center gap-2 px-3 py-1.5 rounded-md bg-bg-700 hover:bg-bg-600 text-sm mono border border-bg-600',
+      onClick: () => setOpen(!open),
+    },
+      e('span', { className: 'w-2 h-2 rounded-full bg-accent' }),
+      current?.provider || '…', e('span', { className: 'text-gray-500' }, '/'), e('span', { className: 'text-white' }, current?.model || '…'),
+      e('span', { className: 'text-gray-500 ml-1' }, open ? '▴' : '▾')
     ),
-    e('h3',{className:'text-sm text-gray-400'},'Recent Audit'),
-    audit&&audit.length?e('table',{className:'w-full text-sm'},e('tbody',null,audit.map((r,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-1'},r.ts),e('td',{className:'p-1'},r.tool_name),e('td',{className:'p-1'},r.outcome))))):e('p',{className:'text-gray-500'},'No entries')
+    open && e('div', { className: 'absolute right-0 top-full mt-1 w-72 bg-bg-700 border border-bg-600 rounded-md shadow-xl z-50 max-h-96 overflow-y-auto scrollbar-thin' },
+      !data ? e('div', { className: 'p-3 text-sm text-gray-400' }, 'Loading…') :
+      e(React.Fragment, null,
+        e('div', { className: 'p-2 border-b border-bg-600 text-[10px] uppercase tracking-wide text-gray-500 mono' }, data.provider + ' models'),
+        !data.models?.length ? e('div', { className: 'p-3 text-sm text-gray-400' }, 'None found. Check provider settings.') :
+          data.models.map(m => e('button', {
+            key: m,
+            className: 'w-full text-left px-3 py-2 text-sm hover:bg-bg-600 mono ' + (m === current?.model ? 'text-accent' : 'text-gray-200'),
+            onClick: async () => {
+              try { await api('/api/settings/llm', { method: 'POST', body: JSON.stringify({ model: m }) }); onChange?.(); toast('Model: ' + m, 'success'); }
+              catch (err) { toast(err.message, 'error'); }
+              setOpen(false);
+            },
+          }, m === current?.model ? '✓ ' + m : '  ' + m))
+      )
+    )
   );
 }
 
-function Chat(){
-  const[msgs,setMsgs]=React.useState([]);
-  const[input,setInput]=React.useState('');
-  const ws=React.useRef(null);
-  React.useEffect(()=>{
-    const proto=location.protocol==='https:'?'wss:':'ws:';
-    const w=new WebSocket(proto+'//'+location.host+'/ws/chat?token='+TOKEN);
-    w.onmessage=ev=>{try{const d=JSON.parse(ev.data);setMsgs(m=>[...m,{role:'assistant',text:d.text||d.answer||JSON.stringify(d)}])}catch{setMsgs(m=>[...m,{role:'assistant',text:ev.data}])}};
-    ws.current=w;
-    return()=>w.close();
-  },[]);
-  const send=()=>{if(!input.trim())return;setMsgs(m=>[...m,{role:'user',text:input}]);if(ws.current&&ws.current.readyState===1)ws.current.send(JSON.stringify({text:input}));setInput('')};
-  return e('div',{className:'flex flex-col h-full'},
-    e('div',{className:'flex-1 overflow-y-auto p-4 space-y-2'},msgs.map((m,i)=>e('div',{key:i,className:'p-2 rounded '+(m.role==='user'?'bg-blue-800 ml-8':'bg-gray-700 mr-8')},m.text))),
-    e('div',{className:'flex p-2 gap-2'},e('input',{className:'flex-1 bg-gray-800 rounded px-3 py-2',value:input,onChange:ev=>setInput(ev.target.value),onKeyDown:ev=>{if(ev.key==='Enter')send()},placeholder:'Type a message...'}),e('button',{className:'bg-blue-600 px-4 py-2 rounded',onClick:send},'Send'))
+function renderMd(text) {
+  try { return { __html: marked.parse(text || '') }; }
+  catch { return { __html: (text || '').replace(/</g, '&lt;') }; }
+}
+
+function prettyJson(s) {
+  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
+}
+
+// ---------- Chat with live tool-call trace via SSE ----------
+function ChatPanel() {
+  const [msgs, setMsgs] = React.useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('chat_msgs') || '[]'); } catch { return []; }
+  });
+  const [input, setInput] = React.useState('');
+  const [sessionId, setSessionId] = React.useState(() => sessionStorage.getItem('chat_session') || null);
+  const [thinking, setThinking] = React.useState(false);
+  const [trace, setTrace] = React.useState([]); // current in-flight events
+  const [attachments, setAttachments] = React.useState([]);
+  const scrollRef = React.useRef(null);
+
+  React.useEffect(() => {
+    sessionStorage.setItem('chat_msgs', JSON.stringify(msgs.slice(-50)));
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [msgs, trace]);
+
+  const handleFiles = async (files) => {
+    for (const file of files) {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        if (sessionId) fd.append('sessionId', sessionId);
+        const r = await fetch('/api/attachments', { method: 'POST', headers: authHdr, body: fd });
+        const j = await r.json();
+        if (r.ok) setAttachments(a => [...a, { name: file.name, path: j.path, size: j.size }]);
+        else toast(j.error || 'upload failed', 'error');
+      } catch (err) { toast(err.message, 'error'); }
+    }
+  };
+
+  const send = async () => {
+    if (!input.trim() || thinking) return;
+    let text = input.trim();
+    if (attachments.length > 0) {
+      text += '\n\n[Attached files]\n' + attachments.map(a => '- ' + a.path).join('\n');
+    }
+    setInput('');
+    setAttachments([]);
+    setMsgs(m => [...m, { role: 'user', text, ts: Date.now() }]);
+    setThinking(true);
+    setTrace([]);
+
+    try {
+      const res = await fetch('/api/chat/stream', {
+        method: 'POST', headers: jsonHdrs,
+        body: JSON.stringify({ text, sessionId }),
+      });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let finalAnswer = '';
+      const localTrace = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const raw = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          if (!raw.trim()) continue;
+          const lines = raw.split('\n');
+          let evt = 'message', data = '';
+          for (const l of lines) {
+            if (l.startsWith('event:')) evt = l.slice(6).trim();
+            else if (l.startsWith('data:')) data += l.slice(5).trim();
+          }
+          let parsed; try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+
+          if (evt === 'session' && parsed.sessionId && !sessionId) {
+            setSessionId(parsed.sessionId);
+            sessionStorage.setItem('chat_session', parsed.sessionId);
+          } else if (evt === 'iteration_start') {
+            localTrace.push({ kind: 'iteration', iteration: parsed.iteration });
+            setTrace([...localTrace]);
+          } else if (evt === 'tool_call') {
+            localTrace.push({ kind: 'tool_call', toolName: parsed.toolName, toolArgs: parsed.toolArgs });
+            setTrace([...localTrace]);
+          } else if (evt === 'tool_result') {
+            // attach result to the matching tool_call entry
+            for (let i = localTrace.length - 1; i >= 0; i--) {
+              if (localTrace[i].kind === 'tool_call' && localTrace[i].toolName === parsed.toolName && !localTrace[i].toolResult) {
+                localTrace[i] = { ...localTrace[i], toolResult: parsed.toolResult };
+                break;
+              }
+            }
+            setTrace([...localTrace]);
+          } else if (evt === 'assistant_delta') {
+            localTrace.push({ kind: 'thought', content: parsed.content });
+            setTrace([...localTrace]);
+          } else if (evt === 'final') {
+            finalAnswer = parsed.answer || '';
+          } else if (evt === 'done') {
+            if (!finalAnswer && parsed.answer) finalAnswer = parsed.answer;
+          } else if (evt === 'error') {
+            throw new Error(parsed.error || 'stream error');
+          }
+        }
+      }
+
+      setMsgs(m => [...m, {
+        role: 'assistant',
+        text: finalAnswer || '(no response)',
+        ts: Date.now(),
+        trace: localTrace.length ? localTrace : undefined,
+      }]);
+    } catch (err) {
+      setMsgs(m => [...m, { role: 'error', text: 'Error: ' + err.message, ts: Date.now() }]);
+    } finally {
+      setThinking(false);
+      setTrace([]);
+    }
+  };
+
+  const newChat = () => {
+    if (msgs.length && !confirm('Start a new chat? Current conversation will be cleared.')) return;
+    setMsgs([]); setSessionId(null); setTrace([]); setAttachments([]);
+    sessionStorage.removeItem('chat_msgs'); sessionStorage.removeItem('chat_session');
+  };
+
+  const renderTrace = (items, compact = false) => e('div', { className: 'space-y-1' }, items.map((it, i) => {
+    if (it.kind === 'iteration') return e('div', { key: i, className: 'text-[10px] uppercase tracking-wider text-gray-600 mono' }, 'iteration ', it.iteration);
+    if (it.kind === 'thought') return e('div', { key: i, className: 'text-sm text-gray-400 italic border-l-2 border-bg-600 pl-2' }, it.content);
+    if (it.kind === 'tool_call') {
+      const done = !!it.toolResult;
+      return e('details', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg overflow-hidden', open: !compact && !done },
+        e('summary', { className: 'px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 hover:bg-bg-700/50' },
+          e('span', { className: 'arrow text-gray-500' }, '▶'),
+          e(Icon.Wrench, { className: 'w-4 h-4 text-accent' }),
+          e('code', { className: 'mono text-accent' }, it.toolName),
+          e('span', { className: 'text-xs text-gray-500 ml-auto' }, done ? '✓ done' : e('span', { className: 'pulse-dot text-yellow-400' }, 'running…'))
+        ),
+        e('div', { className: 'px-3 pb-2 space-y-2' },
+          e('div', null,
+            e('div', { className: 'text-[10px] uppercase text-gray-500 mono mb-1' }, 'args'),
+            e('pre', { className: 'text-xs mono bg-bg-900 p-2 rounded overflow-x-auto' }, prettyJson(it.toolArgs || '{}'))
+          ),
+          done && e('div', null,
+            e('div', { className: 'text-[10px] uppercase text-gray-500 mono mb-1' }, 'result'),
+            e('pre', { className: 'text-xs mono bg-bg-900 p-2 rounded overflow-x-auto max-h-48 scrollbar-thin' }, (it.toolResult || '').slice(0, 4000))
+          )
+        )
+      );
+    }
+    return null;
+  }));
+
+  return e('div', { className: 'flex flex-col h-full' },
+    e('div', { className: 'flex items-center justify-between px-6 py-3 border-b border-bg-700' },
+      e('div', { className: 'flex flex-col' },
+        e('h2', { className: 'text-lg font-semibold' }, 'Chat'),
+        e('span', { className: 'text-xs text-gray-500 mono' }, sessionId ? 'session: ' + sessionId.slice(0, 12) : 'new session')
+      ),
+      e('button', { onClick: newChat, className: 'text-sm px-3 py-1.5 rounded-md bg-bg-700 hover:bg-bg-600 border border-bg-600' }, '+ New chat')
+    ),
+    e('div', { ref: scrollRef, className: 'flex-1 overflow-y-auto px-6 py-4 space-y-4 scrollbar-thin' },
+      msgs.length === 0 && !thinking && e('div', { className: 'flex flex-col items-center justify-center h-full text-center' },
+        e('div', { className: 'w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center text-3xl font-bold mb-4 text-bg-900' }, 'Π'),
+        e('h3', { className: 'text-xl font-semibold mb-1' }, 'What are we working on?'),
+        e('p', { className: 'text-sm text-gray-500 max-w-md' }, 'Polymath has 57 builtin tools plus MCP-connected capabilities. Ask a question, run a task, or kick off a workflow.')
+      ),
+      msgs.map((m, i) => e(React.Fragment, { key: i },
+        m.trace && m.trace.length > 0 && e('div', { className: 'pl-11 pr-16' },
+          e('details', { className: 'bg-bg-800/50 rounded-lg border border-bg-700' },
+            e('summary', { className: 'px-3 py-1.5 text-xs text-gray-500 cursor-pointer flex items-center gap-2' },
+              e('span', { className: 'arrow' }, '▶'),
+              m.trace.filter(t => t.kind === 'tool_call').length, ' tool calls · ',
+              m.trace.filter(t => t.kind === 'iteration').length, ' iterations'
+            ),
+            e('div', { className: 'p-3 pt-0' }, renderTrace(m.trace, true))
+          )
+        ),
+        e('div', { className: 'flex gap-3 ' + (m.role === 'user' ? 'justify-end' : 'justify-start') },
+          m.role !== 'user' && e('div', { className: 'w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-sm font-bold ' + (m.role === 'error' ? 'bg-red-900 text-red-200' : 'bg-gradient-to-br from-accent to-accent-dim text-bg-900') }, m.role === 'error' ? '!' : 'Π'),
+          e('div', {
+            className: 'chat-msg max-w-[75%] px-4 py-2.5 rounded-2xl ' + (
+              m.role === 'user' ? 'bg-accent-dim text-white rounded-br-sm whitespace-pre-wrap' :
+              m.role === 'error' ? 'bg-red-950 text-red-200 border border-red-900' :
+              'bg-bg-800 text-gray-100 rounded-bl-sm border border-bg-700'
+            ),
+            dangerouslySetInnerHTML: m.role === 'user' ? undefined : renderMd(m.text),
+          }, m.role === 'user' ? m.text : null),
+          m.role === 'user' && e('div', { className: 'w-8 h-8 rounded-lg flex-shrink-0 bg-bg-700 flex items-center justify-center text-xs mono text-gray-400' }, 'you')
+        )
+      )),
+      thinking && trace.length > 0 && e('div', { className: 'flex gap-3' },
+        e('div', { className: 'w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center text-sm font-bold text-bg-900' }, 'Π'),
+        e('div', { className: 'flex-1 max-w-[85%]' }, renderTrace(trace))
+      ),
+      thinking && trace.length === 0 && e('div', { className: 'flex gap-3' },
+        e('div', { className: 'w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-dim flex items-center justify-center text-sm font-bold text-bg-900' }, 'Π'),
+        e('div', { className: 'px-4 py-3 bg-bg-800 rounded-2xl border border-bg-700 flex items-center gap-1.5' },
+          e('span', { className: 'w-1.5 h-1.5 rounded-full bg-accent pulse-dot' }),
+          e('span', { className: 'w-1.5 h-1.5 rounded-full bg-accent pulse-dot', style: { animationDelay: '0.2s' } }),
+          e('span', { className: 'w-1.5 h-1.5 rounded-full bg-accent pulse-dot', style: { animationDelay: '0.4s' } })
+        )
+      )
+    ),
+    e('div', { className: 'border-t border-bg-700 p-4' },
+      attachments.length > 0 && e('div', { className: 'mb-2 flex flex-wrap gap-2' }, attachments.map((a, i) =>
+        e('div', { key: i, className: 'flex items-center gap-2 bg-bg-700 border border-bg-600 rounded-md px-2 py-1 text-xs' },
+          e(Icon.Paperclip, { className: 'w-3 h-3' }),
+          e('span', { className: 'mono' }, a.name),
+          e('button', { className: 'text-gray-500 hover:text-red-400', onClick: () => setAttachments(a2 => a2.filter((_, j) => j !== i)) }, '×')
+        )
+      )),
+      e('div', {
+        className: 'flex gap-2 items-end bg-bg-800 rounded-xl border border-bg-700 focus-within:border-accent-dim p-2',
+        onDragOver: ev => ev.preventDefault(),
+        onDrop: ev => { ev.preventDefault(); handleFiles(Array.from(ev.dataTransfer.files)); },
+      },
+        e('label', { className: 'p-2 text-gray-500 hover:text-accent cursor-pointer', title: 'Attach file (or drag & drop)' },
+          e(Icon.Paperclip, { className: 'w-5 h-5' }),
+          e('input', { type: 'file', multiple: true, className: 'hidden', onChange: ev => handleFiles(Array.from(ev.target.files)) })
+        ),
+        e('textarea', {
+          value: input,
+          onChange: ev => setInput(ev.target.value),
+          onKeyDown: ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); send(); } },
+          placeholder: thinking ? 'Thinking…' : 'Ask Polymath anything. Shift+Enter for newline.',
+          disabled: thinking,
+          rows: 1,
+          className: 'flex-1 bg-transparent resize-none outline-none px-2 py-1.5 text-sm placeholder:text-gray-500 max-h-40',
+          style: { minHeight: '28px' },
+        }),
+        e('button', {
+          onClick: send,
+          disabled: thinking || !input.trim(),
+          className: 'px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-bg-900 font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed',
+        }, thinking ? '…' : 'Send')
+      )
+    )
   );
 }
 
-function Tools(){
-  const data=useFetch('/api/tools');
-  if(!data)return e('p',null,'Loading...');
-  return e('table',{className:'w-full text-sm'},e('thead',null,e('tr',null,e('th',{className:'text-left p-2'},'Name'),e('th',{className:'text-left p-2'},'Description'))),e('tbody',null,data.map((t,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-2'},t.function?.name||t.name||''),e('td',{className:'p-2'},t.function?.description||t.description||'')))));
-}
-
-function Sessions(){
-  const data=useFetch('/api/sessions');
-  if(!data)return e('p',null,'Loading...');
-  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No sessions');
-  return e('ul',{className:'p-4 space-y-1'},data.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},JSON.stringify(s))));
-}
-
-function Skills(){
-  const data=useFetch('/api/skills');
-  if(!data)return e('p',null,'Loading...');
-  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No skills');
-  return e('ul',{className:'p-4 space-y-1'},data.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},e('strong',null,s.name),' — ',s.description)));
-}
-
-function CronPanel(){
-  const[jobs,setJobs]=React.useState(null);
-  const[expr,setExpr]=React.useState('');
-  const[task,setTask]=React.useState('');
-  const load=()=>fetch('/api/cron',{headers:hdrs}).then(r=>r.json()).then(setJobs);
-  React.useEffect(()=>{load()},[]);
-  const add=()=>{if(!expr)return;fetch('/api/cron',{method:'POST',headers:hdrs,body:JSON.stringify({cron_expr:expr,task})}).then(()=>{setExpr('');setTask('');load()})};
-  if(!jobs)return e('p',null,'Loading...');
-  return e('div',{className:'p-4 space-y-4'},
-    e('div',{className:'flex gap-2'},e('input',{className:'bg-gray-800 rounded px-2 py-1',placeholder:'cron expr',value:expr,onChange:ev=>setExpr(ev.target.value)}),e('input',{className:'bg-gray-800 rounded px-2 py-1 flex-1',placeholder:'task',value:task,onChange:ev=>setTask(ev.target.value)}),e('button',{className:'bg-green-700 px-3 py-1 rounded',onClick:add},'Add')),
-    e('ul',{className:'space-y-1'},jobs.map((j,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},j.cron_expr,' — ',j.task||'(no task)')))
-  );
-}
-
-function Memory(){return e('p',{className:'p-4 text-gray-400'},'Memory panel — coming soon')}
-
-function Channels(){
-  const[channels,setChannels]=React.useState(null);
-  const[pairings,setPairings]=React.useState(null);
-  React.useEffect(()=>{
-    fetch('/api/channels',{headers:hdrs}).then(r=>r.json()).then(setChannels).catch(()=>setChannels([]));
-    fetch('/api/pairings',{headers:hdrs}).then(r=>r.json()).then(setPairings).catch(()=>setPairings([]));
-  },[]);
-  if(!channels)return e('p',null,'Loading...');
-  return e('div',{className:'p-4 space-y-4'},
-    e('h3',{className:'text-sm text-gray-400'},'Transports'),
-    channels.length?e('ul',{className:'space-y-1'},channels.map((ch,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded flex justify-between'},e('span',null,ch.name),e('span',{className:ch.status==='connected'?'text-green-400':'text-red-400'},ch.status)))):e('p',{className:'text-gray-500'},'No transports'),
-    e('h3',{className:'text-sm text-gray-400 mt-4'},'Pending Pairings'),
-    pairings&&pairings.length?e('ul',{className:'space-y-1'},pairings.map((p,i)=>e('li',{key:i,className:'bg-gray-800 p-2 rounded'},p.channel,' — ',p.sender_id,' — code: ',e('code',null,p.code)))):e('p',{className:'text-gray-500'},'None')
-  );
-}
-
-function McpPanel(){
-  const[servers,setServers]=React.useState(null);
-  const load=()=>fetch('/api/mcp',{headers:hdrs}).then(r=>r.json()).then(setServers).catch(()=>setServers([]));
-  React.useEffect(()=>{load()},[]);
-  const reconnect=(name)=>fetch('/api/mcp/'+name+'/reconnect',{method:'POST',headers:hdrs}).then(()=>setTimeout(load,1000));
-  if(!servers)return e('p',null,'Loading...');
-  if(!servers.length)return e('p',{className:'p-4 text-gray-400'},'No MCP servers configured');
-  return e('ul',{className:'p-4 space-y-2'},servers.map((s,i)=>e('li',{key:i,className:'bg-gray-800 p-3 rounded flex justify-between items-center'},
-    e('div',null,e('strong',null,s.name),' — ',s.tools,' tools'),
-    e('div',{className:'flex items-center gap-2'},e('span',{className:s.health==='connected'?'text-green-400':'text-red-400'},s.health),e('button',{className:'bg-blue-700 px-2 py-1 rounded text-xs',onClick:()=>reconnect(s.name)},'Reconnect'))
-  )));
-}
-
-function Audit(){
-  const data=useFetch('/api/audit');
-  if(!data)return e('p',null,'Loading...');
-  if(!data.length)return e('p',{className:'p-4 text-gray-400'},'No audit entries');
-  return e('table',{className:'w-full text-sm'},e('thead',null,e('tr',null,['ts','tool_name','outcome','duration_ms'].map(h=>e('th',{key:h,className:'text-left p-2'},h)))),e('tbody',null,data.map((r,i)=>e('tr',{key:i,className:'border-t border-gray-700'},e('td',{className:'p-2'},r.ts),e('td',{className:'p-2'},r.tool_name),e('td',{className:'p-2'},r.outcome),e('td',{className:'p-2'},r.duration_ms??'')))));
-}
-
-function Doctor(){
-  const[data,setData]=React.useState(null);
-  React.useEffect(()=>{fetch('/api/doctor',{headers:hdrs}).then(r=>r.json()).then(setData).catch(()=>setData({}))},[]);
-  if(!data)return e('p',null,'Running checks...');
-  const checks=[
-    {label:'Gateway',status:data.gateway},
-    {label:'Database',status:data.db},
-    {label:'LLM',status:data.llm},
+// ---------- Dashboard ----------
+function DashboardPanel() {
+  const [doctor] = useFetch('/api/doctor');
+  const [audit] = useFetch('/api/audit');
+  const [memStats] = useFetch('/api/memory/stats');
+  if (!doctor) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  const cards = [
+    { label: 'Gateway', value: doctor.gateway, accent: doctor.gateway === 'ok' },
+    { label: 'Database', value: doctor.db, accent: doctor.db === 'ok' },
+    { label: 'Tools', value: doctor.tools },
+    { label: 'MCP Up', value: (doctor.mcp_servers || []).filter(s => s.health === 'connected').length + ' / ' + (doctor.mcp_servers || []).length, accent: (doctor.mcp_servers || []).every(s => s.health === 'connected') },
+    { label: 'Sessions', value: memStats?.sessions ?? '—' },
+    { label: 'Episodic', value: memStats?.episodic ?? '—' },
+    { label: 'Semantic', value: memStats?.semantic ?? '—' },
+    { label: 'Uptime', value: Math.floor(doctor.uptime_seconds / 60) + 'm' },
   ];
-  (data.mcp_servers||[]).forEach(s=>checks.push({label:'MCP: '+s.name,status:s.health==='connected'?'ok':s.health}));
-  return e('ul',{className:'p-4 space-y-2'},checks.map((ck,i)=>e('li',{key:i,className:'flex items-center gap-2'},
-    e('span',{className:'text-lg'},ck.status==='ok'||ck.status==='connected'?'✅':ck.status==='unchecked'?'⚠️':'❌'),
-    e('span',null,ck.label),
-    e('span',{className:'text-gray-500 text-sm'},'('+ck.status+')')
-  )));
+  return e('div', { className: 'p-6 space-y-6' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Dashboard'),
+    e('div', { className: 'grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3' }, cards.map((c, i) =>
+      e('div', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide mb-1' }, c.label),
+        e('div', { className: 'text-2xl font-semibold mono ' + (c.accent === true ? 'text-green-400' : c.accent === false ? 'text-red-400' : '') }, c.value)
+      )
+    )),
+    e('div', { className: 'grid md:grid-cols-2 gap-4' },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('h3', { className: 'font-semibold mb-3' }, 'MCP Servers'),
+        !(doctor.mcp_servers || []).length ? e('div', { className: 'text-sm text-gray-500' }, 'None configured') :
+          e('ul', { className: 'space-y-2' }, doctor.mcp_servers.map(s =>
+            e('li', { key: s.name, className: 'flex items-center justify-between text-sm' },
+              e('span', { className: 'mono' }, s.name),
+              e('span', { className: 'flex items-center gap-2' },
+                e('span', { className: 'text-gray-500' }, s.tools, ' tools'),
+                e('span', { className: 'w-2 h-2 rounded-full ' + (s.health === 'connected' ? 'bg-green-500' : 'bg-red-500') })
+              )
+            )
+          ))
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('h3', { className: 'font-semibold mb-3' }, 'Recent Activity'),
+        !audit || !audit.length ? e('div', { className: 'text-sm text-gray-500' }, 'No audit entries yet — use Chat to trigger tool calls') :
+          e('ul', { className: 'space-y-1.5 text-xs mono' }, audit.slice(0, 6).map((r, i) =>
+            e('li', { key: i, className: 'flex items-center gap-2 text-gray-400' },
+              e('span', { className: 'text-gray-600' }, (r.ts || '').slice(11, 19)),
+              e('span', { className: 'text-accent' }, r.tool_name),
+              e('span', { className: 'text-gray-500' }, r.outcome)
+            )
+          ))
+      )
+    )
+  );
 }
 
-function Config(){
-  const data=useFetch('/api/config');
-  if(!data)return e('p',null,'Loading...');
-  return e('pre',{className:'p-4 text-xs overflow-auto bg-gray-800 rounded m-4'},JSON.stringify(data,null,2));
+// ---------- Tools ----------
+function ToolsPanel() {
+  const [data] = useFetch('/api/tools');
+  const [filter, setFilter] = React.useState('');
+  if (!data) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  const rows = data.map(t => ({ name: t.function?.name || t.name || '', desc: t.function?.description || t.description || '' }));
+  const filtered = rows.filter(r => !filter || r.name.toLowerCase().includes(filter.toLowerCase()) || r.desc.toLowerCase().includes(filter.toLowerCase()));
+  const groups = {};
+  filtered.forEach(r => { const prefix = r.name.split('.')[0] || r.name.split('_')[0] || 'other'; (groups[prefix] = groups[prefix] || []).push(r); });
+  return e('div', { className: 'p-6 space-y-4' },
+    e('div', { className: 'flex items-center justify-between' },
+      e('h2', { className: 'text-xl font-semibold' }, 'Tools ', e('span', { className: 'text-sm text-gray-500 font-normal mono' }, '(', filtered.length, ')')),
+      e('input', { value: filter, onChange: ev => setFilter(ev.target.value), placeholder: 'Filter tools…', className: 'bg-bg-800 border border-bg-700 rounded-lg px-3 py-1.5 text-sm w-64 outline-none focus:border-accent-dim mono' })
+    ),
+    e('div', { className: 'space-y-4' }, Object.entries(groups).sort().map(([grp, items]) =>
+      e('div', { key: grp, className: 'bg-bg-800 border border-bg-700 rounded-xl overflow-hidden' },
+        e('div', { className: 'px-4 py-2 border-b border-bg-700 flex items-center gap-2' },
+          e('span', { className: 'text-xs uppercase tracking-wide text-gray-500 mono' }, grp),
+          e('span', { className: 'text-xs text-gray-600' }, items.length)
+        ),
+        e('ul', { className: 'divide-y divide-bg-700' }, items.map((r, i) =>
+          e('li', { key: i, className: 'px-4 py-2.5 hover:bg-bg-700/50 flex items-start gap-4' },
+            e('code', { className: 'mono text-sm text-accent whitespace-nowrap' }, r.name),
+            e('span', { className: 'text-sm text-gray-400 flex-1' }, r.desc)
+          )
+        ))
+      )
+    ))
+  );
 }
 
-const PANELS={Dashboard,Chat,Tools,Sessions,Skills,Cron:CronPanel,Memory,Channels,MCP:McpPanel,Audit,Doctor,Config};
+// ---------- Sessions ----------
+function SessionsPanel() {
+  const [data, , reload] = useFetch('/api/sessions');
+  const [selected, setSelected] = React.useState(null);
+  const [history, setHistory] = React.useState(null);
 
-function App(){
-  const[tab,setTab]=React.useState('Dashboard');
-  const Panel=PANELS[tab];
-  return e('div',{className:'flex flex-col h-screen'},
-    e('nav',{className:'flex bg-gray-800 overflow-x-auto'},TABS.map(t=>e('button',{key:t,className:'px-4 py-2 text-sm '+(t===tab?'bg-gray-700 text-white':'text-gray-400 hover:text-white'),onClick:()=>setTab(t)},t))),
-    e('main',{className:'flex-1 overflow-auto'},e(Panel))
+  React.useEffect(() => {
+    if (selected) api('/api/memory/session/' + selected).then(setHistory).catch(() => setHistory([]));
+    else setHistory(null);
+  }, [selected]);
+
+  const del = async (id) => {
+    if (!confirm('Delete session ' + id.slice(0, 12) + '?')) return;
+    try { await api('/api/sessions/' + id, { method: 'DELETE' }); toast('Deleted', 'success'); setSelected(null); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+
+  if (!data) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  if (!data.length) return e('div', { className: 'p-6 text-gray-500' }, 'No sessions yet. Start one in Chat.');
+
+  return e('div', { className: 'flex h-full' },
+    e('div', { className: 'w-80 border-r border-bg-700 overflow-y-auto scrollbar-thin flex-shrink-0' },
+      e('div', { className: 'p-4 border-b border-bg-700' }, e('h2', { className: 'text-lg font-semibold' }, 'Sessions'), e('span', { className: 'text-xs text-gray-500 mono' }, data.length + ' total')),
+      e('ul', null, data.map(s => e('li', {
+          key: s.id,
+          onClick: () => setSelected(s.id),
+          className: 'px-4 py-3 border-b border-bg-700 cursor-pointer hover:bg-bg-700/50 ' + (selected === s.id ? 'bg-accent/10 border-l-2 border-l-accent' : ''),
+        },
+          e('div', { className: 'mono text-xs text-accent truncate' }, s.id),
+          e('div', { className: 'text-xs text-gray-500 mt-1 flex items-center gap-2' },
+            e('span', null, (s.last_message_at || s.updated_at || '').slice(0, 19)),
+            e('span', { className: 'text-gray-600' }, '·'),
+            e('span', null, s.msg_count || 0, ' msgs')
+          )
+        )))
+    ),
+    e('div', { className: 'flex-1 overflow-y-auto scrollbar-thin' },
+      !selected ? e('div', { className: 'p-6 text-gray-500 text-center' }, 'Pick a session to view history') :
+      !history ? e('div', { className: 'p-6 text-gray-500' }, 'Loading…') :
+      e('div', { className: 'p-6 space-y-3' },
+        e('div', { className: 'flex items-center justify-between' },
+          e('div', null, e('h3', { className: 'mono text-sm text-accent' }, selected), e('span', { className: 'text-xs text-gray-500' }, history.length + ' entries')),
+          e('button', { className: 'text-sm bg-red-900/50 hover:bg-red-900 border border-red-800 text-red-200 rounded-md px-3 py-1', onClick: () => del(selected) }, 'Delete session')
+        ),
+        history.map((h, i) => e('div', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg p-3' },
+          e('div', { className: 'flex items-center gap-2 mb-1.5' },
+            e('span', { className: 'text-[10px] uppercase tracking-wide mono ' + (h.role === 'user' ? 'text-blue-400' : h.role === 'assistant' ? 'text-accent' : 'text-gray-500') }, h.role),
+            e('span', { className: 'text-xs text-gray-500 mono' }, (h.created_at || '').slice(11, 19))
+          ),
+          e('div', { className: 'text-sm whitespace-pre-wrap text-gray-200' }, (h.content || '').slice(0, 2000))
+        ))
+      )
+    )
+  );
+}
+
+// ---------- Skills ----------
+function SkillsPanel() {
+  const [installed, , reload] = useFetch('/api/skills');
+  const [query, setQuery] = React.useState('');
+  const [results, setResults] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const search = async () => {
+    setResults(null);
+    try { setResults(await api('/api/skills/search?q=' + encodeURIComponent(query))); }
+    catch (err) { toast(err.message, 'error'); setResults([]); }
+  };
+  const install = async (name) => {
+    setBusy(true);
+    try { const r = await api('/api/skills/install', { method: 'POST', body: JSON.stringify({ name }) }); toast(r.message || 'Installed', 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const uninstall = async (name) => {
+    if (!confirm('Remove skill "' + name + '"?')) return;
+    try { await api('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' }); toast('Removed', 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+
+  return e('div', { className: 'p-6 space-y-6 max-w-4xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Skills'),
+
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-3' },
+      e('h3', { className: 'font-semibold' }, 'Browse agentskills.io'),
+      e('p', { className: 'text-sm text-gray-500' }, 'Skills are reusable prompts + tool bundles. They register as ', e('code', { className: 'mono text-accent' }, 'skill.<name>'), ' tools the agent can invoke.'),
+      e('div', { className: 'flex gap-2' },
+        e('input', { value: query, onChange: ev => setQuery(ev.target.value), onKeyDown: ev => ev.key === 'Enter' && search(), className: 'flex-1 bg-bg-700 border border-bg-600 rounded-lg px-3 py-2 text-sm outline-none focus:border-accent-dim', placeholder: 'Search skills (empty = show all)' }),
+        e('button', { onClick: search, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 text-sm' }, 'Search')
+      ),
+      results === null ? null :
+      !results.length ? e('div', { className: 'text-sm text-gray-500 text-center py-4' }, 'No results. Either agentskills.io is unreachable or no match.') :
+      e('ul', { className: 'space-y-2 max-h-80 overflow-y-auto scrollbar-thin' }, results.map((r, i) =>
+        e('li', { key: i, className: 'bg-bg-700 border border-bg-600 rounded-lg p-3 flex items-start gap-3' },
+          e('div', { className: 'flex-1' },
+            e('div', { className: 'font-medium' }, r.name),
+            e('div', { className: 'text-sm text-gray-400 mt-0.5' }, r.description || '(no description)')
+          ),
+          e('button', { disabled: busy, onClick: () => install(r.name), className: 'text-xs bg-accent hover:bg-accent-hover text-bg-900 rounded-md px-3 py-1.5 disabled:opacity-40' }, 'Install')
+        )
+      ))
+    ),
+
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-3' },
+      e('div', { className: 'flex items-center justify-between' },
+        e('h3', { className: 'font-semibold' }, 'Installed'),
+        e('span', { className: 'text-xs text-gray-500 mono' }, (installed?.length || 0) + ' skills')
+      ),
+      !installed ? e('div', { className: 'text-sm text-gray-500' }, 'Loading…') :
+      !installed.length ? e('div', { className: 'text-sm text-gray-500 text-center py-4' }, 'No skills installed yet') :
+      e('ul', { className: 'space-y-2' }, installed.map((s, i) =>
+        e('li', { key: i, className: 'bg-bg-700 border border-bg-600 rounded-lg p-3 flex items-start gap-3' },
+          e('div', { className: 'flex-1' },
+            e('div', { className: 'flex items-center gap-2' },
+              e('span', { className: 'font-medium' }, s.name),
+              e('span', { className: 'text-xs mono text-gray-500' }, 'v' + (s.version || '—'))
+            ),
+            e('div', { className: 'text-sm text-gray-400 mt-0.5' }, s.description || '(no description)'),
+            s.author && e('div', { className: 'text-xs text-gray-600 mt-1' }, 'by ', s.author)
+          ),
+          e('button', { onClick: () => uninstall(s.name), className: 'text-xs text-red-400 hover:text-red-300 p-2' }, e(Icon.Trash, { className: 'w-4 h-4' }))
+        )
+      ))
+    )
+  );
+}
+
+// ---------- Cron ----------
+function CronPanel() {
+  const [jobs, , reload] = useFetch('/api/cron');
+  const [expr, setExpr] = React.useState('');
+  const [task, setTask] = React.useState('');
+  const add = async () => {
+    if (!expr) return toast('cron expression required', 'error');
+    try { await api('/api/cron', { method: 'POST', body: JSON.stringify({ cron_expr: expr, task }) }); setExpr(''); setTask(''); reload(); toast('Scheduled', 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+  if (!jobs) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  return e('div', { className: 'p-6 space-y-4 max-w-4xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Scheduled Tasks'),
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4 space-y-2' },
+      e('div', { className: 'flex gap-2' },
+        e('input', { className: 'bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono w-48 outline-none focus:border-accent-dim', placeholder: '0 9 * * *', value: expr, onChange: ev => setExpr(ev.target.value) }),
+        e('input', { className: 'bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm flex-1 outline-none focus:border-accent-dim', placeholder: 'Task prompt — what should the agent do?', value: task, onChange: ev => setTask(ev.target.value) }),
+        e('button', { onClick: add, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 text-sm' }, 'Schedule')
+      ),
+      e('div', { className: 'text-xs text-gray-500 mono' }, 'cron format: min hour dom mon dow · examples: ', e('code', null, '0 9 * * *'), ' daily 9am, ', e('code', null, '*/15 * * * *'), ' every 15m')
+    ),
+    !jobs.length ? e('div', { className: 'text-sm text-gray-500 text-center py-8' }, 'No scheduled tasks yet') :
+      e('ul', { className: 'space-y-2' }, jobs.map((j, i) =>
+        e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-xl p-3 flex items-center gap-4 text-sm' },
+          e('code', { className: 'mono text-accent w-32 flex-shrink-0' }, j.cron_expr),
+          e('span', { className: 'text-gray-300 flex-1' }, j.task || '(no task)'),
+          e('span', { className: 'text-xs mono ' + (j.enabled ? 'text-green-400' : 'text-gray-500') }, j.enabled ? 'active' : 'paused')
+        )
+      ))
+  );
+}
+
+// ---------- Memory ----------
+function MemoryPanel() {
+  const [stats] = useFetch('/api/memory/stats');
+  const [tab, setTab] = React.useState('search');
+  const [query, setQuery] = React.useState('');
+  const [results, setResults] = React.useState(null);
+  const [recent, setRecent] = React.useState(null);
+  const [semantic, setSemantic] = React.useState(null);
+  const [consolidations, setConsolidations] = React.useState(null);
+
+  const search = async () => {
+    if (!query.trim()) return;
+    try { setResults(await api('/api/memory/search?q=' + encodeURIComponent(query))); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+  React.useEffect(() => {
+    if (tab === 'recent') api('/api/memory/recent').then(setRecent).catch(() => setRecent([]));
+    else if (tab === 'semantic') api('/api/memory/semantic').then(setSemantic).catch(() => setSemantic([]));
+    else if (tab === 'consolidations') api('/api/memory/consolidations').then(setConsolidations).catch(() => setConsolidations([]));
+  }, [tab]);
+
+  return e('div', { className: 'p-6 space-y-4 max-w-5xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Memory'),
+    e('div', { className: 'grid grid-cols-4 gap-3' },
+      [['Working', 'per-episode', '—'], ['Episodic', 'FTS5 history', stats?.episodic ?? '…'], ['Semantic', 'pinned + embed', stats?.semantic ?? '…'], ['Procedural', 'learned patterns', 'beta']].map(([l, sub, v], i) =>
+        e('div', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+          e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, l),
+          e('div', { className: 'text-2xl mono font-semibold mt-1' }, v),
+          e('div', { className: 'text-xs text-gray-600' }, sub)
+        )
+      )
+    ),
+    e('div', { className: 'flex gap-1 border-b border-bg-700' }, ['search', 'recent', 'semantic', 'consolidations'].map(t =>
+      e('button', { key: t, onClick: () => setTab(t), className: 'px-4 py-2 text-sm ' + (t === tab ? 'text-accent border-b-2 border-accent' : 'text-gray-500 hover:text-white') }, t)
+    )),
+
+    tab === 'search' && e('div', { className: 'space-y-3' },
+      e('div', { className: 'flex gap-2' },
+        e('input', { value: query, onChange: ev => setQuery(ev.target.value), onKeyDown: ev => ev.key === 'Enter' && search(), placeholder: 'FTS5 query across all episodic memory…', className: 'flex-1 bg-bg-800 border border-bg-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-accent-dim' }),
+        e('button', { onClick: search, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 text-sm' }, e(Icon.Search, { className: 'inline w-4 h-4' }), ' Search')
+      ),
+      results !== null && (
+        !results.length ? e('div', { className: 'text-sm text-gray-500 text-center py-6' }, 'No matches') :
+        e('ul', { className: 'space-y-2' }, results.map((r, i) =>
+          e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg p-3' },
+            e('div', { className: 'flex items-center gap-2 mb-1' },
+              e('span', { className: 'text-[10px] uppercase tracking-wide ' + (r.role === 'user' ? 'text-blue-400' : 'text-accent') }, r.role),
+              e('span', { className: 'text-xs text-gray-500 mono' }, r.session_id?.slice(0, 16)),
+              e('span', { className: 'text-xs text-gray-600 ml-auto' }, r.created_at)
+            ),
+            e('div', { className: 'text-sm text-gray-300' }, (r.content || '').slice(0, 500))
+          )
+        ))
+      )
+    ),
+
+    tab === 'recent' && (
+      !recent ? e('div', { className: 'text-gray-500' }, 'Loading…') :
+      !recent.length ? e('div', { className: 'text-sm text-gray-500 text-center py-6' }, 'No episodic entries yet — chat with Polymath to populate') :
+      e('ul', { className: 'space-y-2' }, recent.map((r, i) =>
+        e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg p-3' },
+          e('div', { className: 'flex items-center gap-2 mb-1' },
+            e('span', { className: 'text-[10px] uppercase tracking-wide ' + (r.role === 'user' ? 'text-blue-400' : 'text-accent') }, r.role),
+            e('span', { className: 'text-xs text-gray-500 mono' }, r.session_id?.slice(0, 16)),
+            e('span', { className: 'text-xs text-gray-600 ml-auto' }, r.created_at)
+          ),
+          e('div', { className: 'text-sm text-gray-300' }, (r.content || '').slice(0, 500))
+        )
+      ))
+    ),
+
+    tab === 'semantic' && (
+      !semantic ? e('div', { className: 'text-gray-500' }, 'Loading…') :
+      !semantic.length ? e('div', { className: 'text-sm text-gray-500 text-center py-6' }, 'No semantic facts yet — consolidation happens periodically') :
+      e('ul', { className: 'space-y-2' }, semantic.map((r, i) =>
+        e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg p-3' },
+          e('div', { className: 'flex items-center gap-2 mb-1' },
+            r.pinned ? e('span', { className: 'text-xs text-accent' }, '📌 pinned') : null,
+            e('span', { className: 'text-xs text-gray-600 ml-auto' }, r.created_at)
+          ),
+          e('div', { className: 'text-sm text-gray-300' }, (r.content || '').slice(0, 500))
+        )
+      ))
+    ),
+
+    tab === 'consolidations' && (
+      !consolidations ? e('div', { className: 'text-gray-500' }, 'Loading…') :
+      !consolidations.length ? e('div', { className: 'text-sm text-gray-500 text-center py-6' }, 'No consolidations yet — chat for a few minutes, then go idle 20+ min for the scheduler to fire') :
+      e(React.Fragment, null,
+        e('div', { className: 'text-xs text-gray-500 mb-2' }, 'Sessions whose transcripts have been summarized into semantic memory. Compressed turns drop out of working memory but stay in audit storage.'),
+        e('ul', { className: 'space-y-2' }, consolidations.map((r, i) =>
+          e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-lg p-3' },
+            e('div', { className: 'flex items-center gap-3 text-xs mono' },
+              e('span', { className: 'text-accent' }, r.session_id?.slice(0, 16)),
+              e('span', { className: 'text-gray-500' }, r.consolidated_at),
+              e('span', { className: 'ml-auto flex gap-3 text-gray-400' },
+                e('span', null, r.turn_count, ' turns'),
+                e('span', null, r.compressed_count, ' compressed'),
+                e('span', { className: 'text-accent' }, r.facts_count, ' facts')
+              )
+            )
+          )
+        ))
+      )
+    )
+  );
+}
+
+// ---------- Channels ----------
+function ChannelsPanel() {
+  const [cfg] = useFetch('/api/config');
+  const [conns] = useFetch('/api/channels');
+  const [editing, setEditing] = React.useState(null);
+  const [form, setForm] = React.useState({});
+
+  const connected = new Set((conns || []).map(c => c.name));
+
+  const beginEdit = (name) => {
+    setEditing(name);
+    setForm(JSON.parse(JSON.stringify(cfg.channels[name] || {})));
+  };
+  const save = async () => {
+    try {
+      await api('/api/settings/channels', { method: 'POST', body: JSON.stringify({ [editing]: form }) });
+      toast('Saved — restart gateway to apply', 'success');
+      setEditing(null);
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  if (!cfg) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+
+  const fieldset = (children) => e('div', { className: 'space-y-3' }, children);
+  const field = (label, props) => e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, label), e('input', { ...props, className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }));
+  const toggle = (label, value, onChange) => e('label', { className: 'flex items-center gap-2 text-sm cursor-pointer' }, e('input', { type: 'checkbox', checked: !!value, onChange: ev => onChange(ev.target.checked), className: 'accent-accent' }), label);
+
+  const CONFIGS = {
+    telegram: () => fieldset([
+      toggle('Enabled', form.enabled, v => setForm(f => ({ ...f, enabled: v }))),
+      field('Bot token', { value: form.token || '', onChange: ev => setForm(f => ({ ...f, token: ev.target.value })), placeholder: '123456:ABC...', type: 'password' }),
+      e('p', { className: 'text-xs text-gray-500', key: 'h' }, 'Get a bot token from @BotFather on Telegram.'),
+    ]),
+    discord: () => fieldset([
+      toggle('Enabled', form.enabled, v => setForm(f => ({ ...f, enabled: v }))),
+      field('Bot token', { value: form.token || '', onChange: ev => setForm(f => ({ ...f, token: ev.target.value })), placeholder: 'MTA...', type: 'password' }),
+      e('p', { className: 'text-xs text-gray-500', key: 'h' }, 'Create an application at discord.com/developers → Bot, copy the token.'),
+    ]),
+    signal: () => fieldset([
+      toggle('Enabled', form.enabled, v => setForm(f => ({ ...f, enabled: v }))),
+      e('p', { className: 'text-xs text-gray-500', key: 'h' }, 'Requires ', e('code', { className: 'mono text-accent' }, 'signal-cli'), ' installed and linked to your account. See the README for setup.'),
+    ]),
+    email: () => fieldset([
+      toggle('Enabled', form.enabled, v => setForm(f => ({ ...f, enabled: v }))),
+      field('IMAP host:port', { value: form.imap || '', onChange: ev => setForm(f => ({ ...f, imap: ev.target.value })), placeholder: 'imap.gmail.com:993' }),
+      field('SMTP host:port', { value: form.smtp || '', onChange: ev => setForm(f => ({ ...f, smtp: ev.target.value })), placeholder: 'smtp.gmail.com:587' }),
+      field('Username', { value: form.username || '', onChange: ev => setForm(f => ({ ...f, username: ev.target.value })), placeholder: 'you@example.com' }),
+      field('Password', { value: form.password || '', onChange: ev => setForm(f => ({ ...f, password: ev.target.value })), type: 'password' }),
+      field('Subject prefix (filter)', { value: form.subject_prefix || '', onChange: ev => setForm(f => ({ ...f, subject_prefix: ev.target.value })), placeholder: '[polymath]' }),
+    ]),
+    webchat: () => fieldset([
+      toggle('Enabled', form.enabled, v => setForm(f => ({ ...f, enabled: v }))),
+      e('p', { className: 'text-xs text-gray-500', key: 'h' }, 'The webchat transport is this UI — always useful to keep on.'),
+    ]),
+  };
+
+  const KNOWN = [
+    { name: 'webchat', label: 'Web Chat', desc: 'This built-in browser UI.' },
+    { name: 'telegram', label: 'Telegram', desc: 'Bot DMs from @BotFather.' },
+    { name: 'discord', label: 'Discord', desc: 'Bot user in servers/DMs.' },
+    { name: 'signal', label: 'Signal', desc: 'Via signal-cli daemon.' },
+    { name: 'email', label: 'Email', desc: 'IMAP poll + SMTP reply.' },
+  ];
+
+  return e('div', { className: 'p-6 space-y-4 max-w-4xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Channels'),
+    e('p', { className: 'text-sm text-gray-500' }, 'Connect chat transports. New messages spawn agent sessions; replies go back through the same channel. Pairing-approved senders skip the pending queue.'),
+
+    e('div', { className: 'grid md:grid-cols-2 gap-3' }, KNOWN.map(({ name, label, desc }) => {
+      const c = cfg.channels[name] || {};
+      const isConn = connected.has(name);
+      return e('div', { key: name, className: 'bg-bg-800 border border-bg-700 rounded-xl p-4 space-y-2' },
+        e('div', { className: 'flex items-center justify-between' },
+          e('div', null, e('div', { className: 'font-semibold' }, label), e('div', { className: 'text-xs text-gray-500' }, desc)),
+          e('span', { className: 'text-xs mono ' + (isConn ? 'text-green-400' : c.enabled ? 'text-yellow-400' : 'text-gray-500') }, isConn ? '● connected' : c.enabled ? '◐ enabled, needs restart' : '○ disabled')
+        ),
+        e('button', { onClick: () => beginEdit(name), className: 'text-sm bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1.5' }, 'Configure')
+      );
+    })),
+
+    editing && e('div', { className: 'fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6', onClick: () => setEditing(null) },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-6 w-full max-w-lg space-y-4', onClick: ev => ev.stopPropagation() },
+        e('h3', { className: 'text-lg font-semibold capitalize' }, editing),
+        CONFIGS[editing]?.(),
+        e('div', { className: 'flex gap-2 justify-end' },
+          e('button', { onClick: () => setEditing(null), className: 'px-3 py-1.5 rounded-md text-sm text-gray-400 hover:text-white' }, 'Cancel'),
+          e('button', { onClick: save, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 py-1.5 text-sm' }, 'Save')
+        )
+      )
+    )
+  );
+}
+
+// ---------- MCP ----------
+function McpPanel() {
+  const [servers, , reload] = useFetch('/api/mcp');
+  const [adding, setAdding] = React.useState(false);
+  const [form, setForm] = React.useState({ name: '', command: '', args: '', env: '' });
+
+  const reconnect = async name => { try { await api('/api/mcp/' + name + '/reconnect', { method: 'POST' }); toast('Reconnecting…'); setTimeout(reload, 1500); } catch (err) { toast(err.message, 'error'); } };
+  const remove = async name => { if (!confirm('Remove MCP server "' + name + '"?')) return; try { await api('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' }); toast('Removed', 'success'); reload(); } catch (err) { toast(err.message, 'error'); } };
+  const add = async () => {
+    if (!form.name || !form.command) return toast('Name + command required', 'error');
+    const argsArr = form.args.split('\n').map(s => s.trim()).filter(Boolean);
+    let envObj = undefined;
+    if (form.env.trim()) {
+      envObj = {};
+      for (const line of form.env.split('\n')) {
+        const i = line.indexOf('=');
+        if (i > 0) envObj[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+    }
+    try {
+      await api('/api/mcp', { method: 'POST', body: JSON.stringify({ name: form.name, command: form.command, args: argsArr, env: envObj }) });
+      toast('Added', 'success'); setAdding(false); setForm({ name: '', command: '', args: '', env: '' }); reload();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  const QUICK_ADDS = [
+    { name: 'filesystem', command: 'npx', args: '-y\n@modelcontextprotocol/server-filesystem\n' + (navigator.platform.startsWith('Win') ? 'C:\\\\' : '/'), desc: 'Sandboxed file ops' },
+    { name: 'fetch', command: 'uvx', args: 'mcp-server-fetch', desc: 'Fetch URLs as markdown' },
+    { name: 'time', command: 'uvx', args: 'mcp-server-time', desc: 'Timezones + current time' },
+    { name: 'sqlite', command: 'uvx', args: 'mcp-server-sqlite\n--db-path\n~/.polymath/scratch.db', desc: 'Scratch SQLite database' },
+  ];
+
+  if (!servers) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  return e('div', { className: 'p-6 space-y-4 max-w-4xl' },
+    e('div', { className: 'flex items-center justify-between' },
+      e('h2', { className: 'text-xl font-semibold' }, 'MCP Servers'),
+      e('button', { onClick: () => setAdding(true), className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-3 py-1.5 text-sm flex items-center gap-1' }, e(Icon.Plus, { className: 'w-4 h-4' }), 'Add Server')
+    ),
+    e('p', { className: 'text-sm text-gray-500' }, 'MCP (Model Context Protocol) servers are stdio subprocesses that expose additional tools. Add local binaries, Python scripts, or Node packages.'),
+
+    !servers.length ? e('div', { className: 'text-sm text-gray-500 text-center py-8 bg-bg-800 border border-bg-700 rounded-xl' }, 'No MCP servers — add one to expose extra tools') :
+      e('ul', { className: 'space-y-2' }, servers.map((s, i) =>
+        e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-xl p-4 flex items-center justify-between' },
+          e('div', null,
+            e('div', { className: 'font-semibold mono' }, s.name),
+            e('div', { className: 'text-sm text-gray-500' }, s.tools, ' tools exposed')
+          ),
+          e('div', { className: 'flex items-center gap-2' },
+            e('span', { className: 'text-xs mono ' + (s.health === 'connected' ? 'text-green-400' : 'text-red-400') }, s.health),
+            e('button', { onClick: () => reconnect(s.name), className: 'text-xs bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1' }, 'Reconnect'),
+            e('button', { onClick: () => remove(s.name), className: 'text-xs text-red-400 hover:text-red-300 p-1' }, e(Icon.Trash, { className: 'w-4 h-4' }))
+          )
+        )
+      )),
+
+    adding && e('div', { className: 'fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6', onClick: () => setAdding(false) },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-6 w-full max-w-xl space-y-4', onClick: ev => ev.stopPropagation() },
+        e('h3', { className: 'text-lg font-semibold' }, 'Add MCP Server'),
+        e('div', null,
+          e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide mb-2' }, 'Quick adds'),
+          e('div', { className: 'grid grid-cols-2 gap-2' }, QUICK_ADDS.map(q =>
+            e('button', { key: q.name, onClick: () => setForm({ name: q.name, command: q.command, args: q.args, env: '' }), className: 'text-left p-2 rounded-lg bg-bg-700 hover:bg-bg-600 border border-bg-600' },
+              e('div', { className: 'mono text-sm' }, q.name),
+              e('div', { className: 'text-xs text-gray-500' }, q.desc)
+            )
+          ))
+        ),
+        e('div', { className: 'space-y-3' },
+          e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Name'), e('input', { value: form.name, onChange: ev => setForm(f => ({ ...f, name: ev.target.value })), placeholder: 'my-server', className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' })),
+          e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Command'), e('input', { value: form.command, onChange: ev => setForm(f => ({ ...f, command: ev.target.value })), placeholder: 'uvx', className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' })),
+          e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Args (one per line)'), e('textarea', { value: form.args, onChange: ev => setForm(f => ({ ...f, args: ev.target.value })), rows: 4, className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' })),
+          e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Env vars (KEY=VAL per line, optional)'), e('textarea', { value: form.env, onChange: ev => setForm(f => ({ ...f, env: ev.target.value })), rows: 3, placeholder: 'API_KEY=...', className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }))
+        ),
+        e('div', { className: 'flex gap-2 justify-end' },
+          e('button', { onClick: () => setAdding(false), className: 'px-3 py-1.5 rounded-md text-sm text-gray-400 hover:text-white' }, 'Cancel'),
+          e('button', { onClick: add, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 py-1.5 text-sm' }, 'Add + Start')
+        )
+      )
+    ),
+
+    // Media-memory quick action
+    servers.some(s => s.name === 'media-memory') && e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-3' },
+      e('h3', { className: 'font-semibold flex items-center gap-2' }, e(Icon.Play, { className: 'w-4 h-4 text-accent' }), 'Quick: Index Media'),
+      e('p', { className: 'text-sm text-gray-500' }, 'Index a folder of videos/photos with GPU CLIP embeddings via the C++ media-memory capability. Follow ', e('code', { className: 'mono text-accent' }, 'content/<brand>/<category>/'), ' for auto-tagging.'),
+      e(IndexMediaForm)
+    )
+  );
+}
+
+function IndexMediaForm() {
+  const [path, setPath] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const run = async () => {
+    if (!path) return toast('Path required', 'error');
+    setBusy(true);
+    try {
+      const r = await api('/api/actions/invoke', { method: 'POST', body: JSON.stringify({ tool: 'media-memory.index', args: { path } }) });
+      toast('Indexing started: ' + JSON.stringify(r.result).slice(0, 100), 'success');
+    } catch (err) { toast(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return e('div', { className: 'flex gap-2' },
+    e('input', { value: path, onChange: ev => setPath(ev.target.value), placeholder: 'D:\\AGENT\\content\\bmx\\reels', className: 'flex-1 bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
+    e('button', { onClick: run, disabled: busy, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 text-sm disabled:opacity-50' }, busy ? 'Working…' : 'Index')
+  );
+}
+
+// ---------- Audit ----------
+function AuditPanel() {
+  const [data, , reload] = useFetch('/api/audit');
+  if (!data) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  return e('div', { className: 'p-6' },
+    e('div', { className: 'flex items-center justify-between mb-4' },
+      e('h2', { className: 'text-xl font-semibold' }, 'Audit Log'),
+      e('button', { onClick: reload, className: 'text-sm bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1' }, 'Refresh')
+    ),
+    !data.length ? e('div', { className: 'text-sm text-gray-500 text-center py-8 bg-bg-800 border border-bg-700 rounded-xl' }, 'No audit entries yet — Polymath logs every tool call here. Try chatting with her to populate.') :
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl overflow-hidden' },
+      e('table', { className: 'w-full text-sm' },
+        e('thead', { className: 'bg-bg-700' }, e('tr', null, ['Time', 'Tool', 'Outcome', 'Duration'].map(h =>
+          e('th', { key: h, className: 'text-left px-4 py-2 text-xs uppercase tracking-wide text-gray-500 font-medium' }, h)
+        ))),
+        e('tbody', { className: 'divide-y divide-bg-700' }, data.slice(0, 100).map((r, i) =>
+          e('tr', { key: i, className: 'hover:bg-bg-700/30' },
+            e('td', { className: 'px-4 py-2 mono text-xs text-gray-500' }, (r.ts || '').slice(0, 19)),
+            e('td', { className: 'px-4 py-2 mono text-accent' }, r.tool_name),
+            e('td', { className: 'px-4 py-2 text-sm ' + (r.outcome === 'ok' ? 'text-green-400' : 'text-red-400') }, r.outcome),
+            e('td', { className: 'px-4 py-2 mono text-xs text-gray-500' }, (r.duration_ms ?? '—') + 'ms')
+          )
+        ))
+      )
+    )
+  );
+}
+
+// ---------- Doctor ----------
+function DoctorPanel() {
+  const [data, , reload] = useFetch('/api/doctor');
+  if (!data) return e('div', { className: 'p-6 text-gray-500' }, 'Running checks…');
+  const checks = [
+    { label: 'Gateway HTTP', status: data.gateway },
+    { label: 'Database (SQLite)', status: data.db },
+    { label: 'LLM adapter', status: data.llm },
+  ];
+  (data.mcp_servers || []).forEach(s => checks.push({ label: 'MCP: ' + s.name, status: s.health === 'connected' ? 'ok' : s.health }));
+  return e('div', { className: 'p-6 space-y-4 max-w-3xl' },
+    e('div', { className: 'flex items-center justify-between' },
+      e('h2', { className: 'text-xl font-semibold' }, 'Doctor'),
+      e('button', { onClick: reload, className: 'text-sm bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1.5' }, 'Re-run')
+    ),
+    e('ul', { className: 'space-y-2' }, checks.map((ck, i) =>
+      e('li', { key: i, className: 'bg-bg-800 border border-bg-700 rounded-xl p-3 flex items-center gap-3' },
+        e('span', { className: 'text-xl' }, ck.status === 'ok' || ck.status === 'connected' ? '✅' : ck.status === 'unchecked' ? '⚠️' : '❌'),
+        e('span', { className: 'flex-1' }, ck.label),
+        e('span', { className: 'text-sm mono text-gray-500' }, ck.status)
+      )
+    ))
+  );
+}
+
+// ---------- Media (catalog browser) ----------
+function MediaPanel() {
+  const [stats, setStats] = React.useState(null);
+  const [filter, setFilter] = React.useState({ brand: '', category: '', limit: 50 });
+  const [items, setItems] = React.useState(null);
+  const [selected, setSelected] = React.useState(null);
+  const [pipeline, setPipeline] = React.useState(null);
+  const [seedPath, setSeedPath] = React.useState('');
+  const [seeding, setSeeding] = React.useState(false);
+
+  const reloadStats = React.useCallback(() => {
+    api('/api/media/stats').then(setStats).catch(() => setStats({ total: 0, by_brand: {}, by_category: {} }));
+  }, []);
+
+  const reloadItems = React.useCallback(() => {
+    const params = new URLSearchParams();
+    if (filter.brand) params.set('brand', filter.brand);
+    if (filter.category) params.set('category', filter.category);
+    if (filter.limit) params.set('limit', String(filter.limit));
+    api('/api/media?' + params.toString()).then(setItems).catch(() => setItems([]));
+  }, [filter]);
+
+  React.useEffect(() => { reloadStats(); reloadItems(); }, [reloadStats, reloadItems]);
+
+  React.useEffect(() => {
+    if (!selected) { setPipeline(null); return; }
+    api('/api/media/' + selected.id + '/pipeline').then(setPipeline).catch(() => setPipeline([]));
+  }, [selected]);
+
+  const runSeed = async () => {
+    if (!seedPath.trim()) return toast('enter a path to seed', 'error');
+    setSeeding(true);
+    try {
+      // Long-running — drive it via the actions endpoint that wraps the
+      // tool router. Falls back gracefully when the path is unreachable.
+      const r = await api('/api/actions/invoke', {
+        method: 'POST',
+        body: JSON.stringify({ tool: 'media.seed', args: { path: seedPath } }),
+      });
+      if (r.ok) toast('seeded ' + (r.result?.registered ?? '?') + ' files', 'success');
+      else toast(r.error || 'seed failed', 'error');
+      reloadStats(); reloadItems();
+    } catch (err) { toast(err.message, 'error'); }
+    finally { setSeeding(false); }
+  };
+
+  if (!stats) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+
+  const total = stats.total || 0;
+  const brandEntries = Object.entries(stats.by_brand || {}).sort((a, b) => b[1] - a[1]);
+  const categoryEntries = Object.entries(stats.by_category || {}).sort((a, b) => b[1] - a[1]);
+
+  return e('div', { className: 'p-6 space-y-4 max-w-7xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Media catalog'),
+    e('p', { className: 'text-sm text-gray-500' }, 'Every video and photo Polymath has indexed, with brand and category auto-inferred from path.'),
+
+    // Top stats
+    e('div', { className: 'grid grid-cols-2 md:grid-cols-4 gap-3' },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Total'),
+        e('div', { className: 'text-2xl font-semibold mono mt-1' }, total)
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Brands'),
+        e('div', { className: 'text-2xl font-semibold mono mt-1' }, brandEntries.length)
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Categories'),
+        e('div', { className: 'text-2xl font-semibold mono mt-1' }, categoryEntries.length)
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Top brand'),
+        e('div', { className: 'text-2xl font-semibold mono mt-1' }, brandEntries[0]?.[0] || '—')
+      )
+    ),
+
+    // Seed-from-path quick action
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4 flex gap-2 items-center' },
+      e('input', { value: seedPath, onChange: ev => setSeedPath(ev.target.value), placeholder: 'D:/AGENT or any path to scan and catalog', className: 'flex-1 bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
+      e('button', { onClick: runSeed, disabled: seeding, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 py-1.5 text-sm disabled:opacity-50' }, seeding ? 'Seeding…' : 'Seed catalog')
+    ),
+
+    // Brand + category breakdowns
+    e('div', { className: 'grid md:grid-cols-2 gap-4' },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('h3', { className: 'font-semibold mb-3' }, 'By brand'),
+        !brandEntries.length ? e('div', { className: 'text-sm text-gray-500' }, 'no items yet — seed your workspace to populate') :
+        e('ul', { className: 'space-y-1 text-sm' }, brandEntries.map(([b, n]) => e('li', { key: b, className: 'flex justify-between mono' }, e('span', null, b), e('span', { className: 'text-accent' }, n))))
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        e('h3', { className: 'font-semibold mb-3' }, 'By category'),
+        !categoryEntries.length ? e('div', { className: 'text-sm text-gray-500' }, 'no items yet') :
+        e('ul', { className: 'space-y-1 text-sm' }, categoryEntries.map(([c, n]) => e('li', { key: c, className: 'flex justify-between mono' }, e('span', null, c), e('span', { className: 'text-accent' }, n))))
+      )
+    ),
+
+    // Filter bar
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-3 flex gap-2 items-center text-sm' },
+      e('span', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Filter'),
+      e('input', { value: filter.brand, onChange: ev => setFilter(f => ({ ...f, brand: ev.target.value })), placeholder: 'brand', className: 'bg-bg-700 border border-bg-600 rounded-md px-2 py-1 text-sm mono w-32' }),
+      e('input', { value: filter.category, onChange: ev => setFilter(f => ({ ...f, category: ev.target.value })), placeholder: 'category', className: 'bg-bg-700 border border-bg-600 rounded-md px-2 py-1 text-sm mono w-32' }),
+      e('input', { type: 'number', value: filter.limit, onChange: ev => setFilter(f => ({ ...f, limit: parseInt(ev.target.value, 10) || 50 })), className: 'bg-bg-700 border border-bg-600 rounded-md px-2 py-1 text-sm mono w-20' }),
+      e('button', { onClick: reloadItems, className: 'ml-auto bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1' }, 'Apply')
+    ),
+
+    // Items list + detail pane
+    e('div', { className: 'grid grid-cols-1 md:grid-cols-3 gap-3' },
+      e('div', { className: 'md:col-span-2 bg-bg-800 border border-bg-700 rounded-xl overflow-hidden' },
+        !items ? e('div', { className: 'p-6 text-gray-500' }, 'Loading…') :
+        !items.length ? e('div', { className: 'p-6 text-sm text-gray-500 text-center' }, 'no items match your filter') :
+        e('ul', { className: 'divide-y divide-bg-700 max-h-96 overflow-y-auto scrollbar-thin' }, items.map((m, i) =>
+          e('li', { key: m.id, onClick: () => setSelected(m), className: 'px-4 py-2 hover:bg-bg-700/50 cursor-pointer ' + (selected?.id === m.id ? 'bg-accent/10' : '') },
+            e('div', { className: 'flex justify-between items-start gap-3' },
+              e('div', { className: 'min-w-0 flex-1' },
+                e('div', { className: 'text-xs mono text-gray-500 truncate' }, m.path),
+                e('div', { className: 'flex gap-2 mt-1 text-xs' },
+                  m.brand && e('span', { className: 'bg-bg-700 px-2 py-0.5 rounded mono' }, m.brand),
+                  m.category && e('span', { className: 'bg-bg-700 px-2 py-0.5 rounded mono text-accent' }, m.category),
+                  m.kind && e('span', { className: 'text-gray-500 mono' }, m.kind)
+                )
+              ),
+              m.duration_sec && e('span', { className: 'text-xs mono text-gray-500 flex-shrink-0' }, Math.round(m.duration_sec) + 's')
+            )
+          )
+        ))
+      ),
+
+      // Detail / pipeline
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+        !selected ? e('div', { className: 'text-sm text-gray-500 text-center py-12' }, 'pick a file to see its workflow timeline') :
+        e('div', { className: 'space-y-3' },
+          e('h3', { className: 'font-semibold mono text-sm break-all' }, selected.path.split(/[\\/]/).pop()),
+          e('div', { className: 'text-xs text-gray-500 mono break-all' }, selected.path),
+          selected.metadata && Object.keys(selected.metadata).length > 0 && e('div', null,
+            e('div', { className: 'text-xs uppercase text-gray-500 mt-2 mb-1' }, 'metadata'),
+            e('pre', { className: 'text-xs mono bg-bg-900 p-2 rounded overflow-x-auto' }, JSON.stringify(selected.metadata, null, 2))
+          ),
+          e('div', null,
+            e('div', { className: 'text-xs uppercase text-gray-500 mt-2 mb-1' }, 'pipeline'),
+            !pipeline ? e('div', { className: 'text-xs text-gray-500' }, 'loading…') :
+            !pipeline.length ? e('div', { className: 'text-xs text-gray-500' }, 'no workflow events yet') :
+            e('ul', { className: 'space-y-1 text-xs' }, pipeline.map((ev, i) =>
+              e('li', { key: i, className: 'flex items-center gap-2' },
+                e('span', { className: 'text-accent mono' }, ev.step),
+                ev.tool && e('span', { className: 'text-gray-500' }, '· ' + ev.tool),
+                ev.platform && e('span', { className: 'text-gray-500' }, '→ ' + ev.platform),
+                e('span', { className: 'text-gray-600 ml-auto' }, (ev.created_at || '').slice(0, 19))
+              )
+            ))
+          )
+        )
+      )
+    )
+  );
+}
+
+// ---------- GPU ----------
+function GpuPanel() {
+  const [state, setState] = React.useState(null);
+  const [form, setForm] = React.useState({ owner: '', reason: '', hold: 60 });
+  const load = () => api('/api/gpu/state').then(setState).catch(() => setState({ dormant: true }));
+  React.useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
+
+  const claim = async () => {
+    if (!form.owner) return toast('Owner label required', 'error');
+    try {
+      const r = await api('/api/gpu/claim', { method: 'POST', body: JSON.stringify({ owner: form.owner, reason: form.reason, hold_minutes: form.hold }) });
+      if (r.ok) toast('GPU claimed · token ' + (r.token || '').slice(0, 8), 'success');
+      else toast(r.error || 'claim failed', 'error');
+      load();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  const forceRelease = async () => {
+    try { const r = await api('/api/gpu/release', { method: 'POST', body: JSON.stringify({ token: 'force' }) }); toast(r.ok ? 'Released' : r.error, r.ok ? 'success' : 'error'); load(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+  const evacuate = async () => {
+    try { await api('/api/gpu/evacuate', { method: 'POST' }); toast('Ollama evacuated from VRAM', 'success'); load(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+
+  if (!state) return e('div', { className: 'p-6 text-gray-500' }, 'Loading…');
+  if (state.dormant) return e('div', { className: 'p-6 max-w-2xl' },
+    e('h2', { className: 'text-xl font-semibold mb-2' }, 'GPU Broker'),
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 text-sm text-gray-400' },
+      'GPU broker is dormant. You are using a cloud LLM provider (', e('code', { className: 'mono text-accent' }, 'openai/anthropic/google/…'), '), so there is nothing to arbitrate locally.',
+      e('div', { className: 'mt-3' }, 'Switch to Ollama or LM Studio in Settings to enable GPU lease management.')
+    )
+  );
+
+  const used = state.vram_used_mb ?? 0;
+  const total = state.vram_total_mb ?? 1;
+  const pct = Math.min(100, Math.round(used / total * 100));
+  const statusColor = state.status === 'idle' ? 'text-green-400' : state.status === 'user-claimed' ? 'text-yellow-400' : state.status === 'draining' ? 'text-orange-400' : 'text-accent';
+
+  return e('div', { className: 'p-6 space-y-4 max-w-4xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'GPU Broker'),
+    e('p', { className: 'text-sm text-gray-500' }, 'Arbitrates local VRAM between Polymath and other GPU-heavy processes (video editing, upscalers, peer agents). Polymath evacuates automatically when an external workload takes over.'),
+
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5' },
+      e('div', { className: 'flex items-center justify-between mb-3' },
+        e('div', null,
+          e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Status'),
+          e('div', { className: 'text-2xl font-semibold mono ' + statusColor }, state.status)
+        ),
+        state.owner && e('div', { className: 'text-right' },
+          e('div', { className: 'text-xs text-gray-500 uppercase tracking-wide' }, 'Holder'),
+          e('div', { className: 'mono text-accent' }, state.owner),
+          state.reason && e('div', { className: 'text-xs text-gray-500 mt-0.5' }, state.reason),
+          state.expires_at && e('div', { className: 'text-xs text-gray-600 mono' }, 'expires: ', new Date(state.expires_at).toLocaleTimeString())
+        )
+      ),
+      e('div', { className: 'flex items-center gap-3 text-sm' },
+        e('div', { className: 'flex-1' },
+          e('div', { className: 'flex items-center justify-between text-xs mono text-gray-500 mb-1' },
+            e('span', null, 'VRAM ', used, ' / ', total, ' MB'),
+            e('span', null, pct + '%')
+          ),
+          e('div', { className: 'h-2 bg-bg-700 rounded-full overflow-hidden' },
+            e('div', { className: 'h-full bg-gradient-to-r from-accent-dim to-accent transition-all', style: { width: pct + '%' } })
+          )
+        )
+      ),
+      state.loaded_models && state.loaded_models.length > 0 && e('div', { className: 'mt-3 text-xs' },
+        e('span', { className: 'text-gray-500 uppercase tracking-wide mr-2' }, 'Resident:'),
+        state.loaded_models.map((m, i) => e('span', { key: i, className: 'inline-block mono text-accent bg-bg-700 rounded px-2 py-0.5 mr-1' }, m))
+      )
+    ),
+
+    e('div', { className: 'grid md:grid-cols-2 gap-3' },
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-3' },
+        e('h3', { className: 'font-semibold' }, 'Claim GPU'),
+        e('p', { className: 'text-xs text-gray-500' }, 'Evacuates Polymath\'s LLM from VRAM. Agent requests during a claim get a polite "busy" reply.'),
+        e('input', { value: form.owner, onChange: ev => setForm(f => ({ ...f, owner: ev.target.value })), placeholder: 'owner label (e.g. resolve-export)', className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
+        e('input', { value: form.reason, onChange: ev => setForm(f => ({ ...f, reason: ev.target.value })), placeholder: 'reason (optional)', className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent-dim' }),
+        e('div', { className: 'flex items-center gap-2' },
+          e('label', { className: 'text-xs text-gray-500' }, 'auto-release after'),
+          e('input', { type: 'number', value: form.hold, onChange: ev => setForm(f => ({ ...f, hold: parseInt(ev.target.value, 10) })), className: 'w-20 bg-bg-700 border border-bg-600 rounded-lg px-2 py-1 text-sm mono outline-none focus:border-accent-dim' }),
+          e('span', { className: 'text-xs text-gray-500' }, 'minutes')
+        ),
+        e('button', { onClick: claim, className: 'w-full bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 py-2 text-sm' }, 'Claim')
+      ),
+      e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-3' },
+        e('h3', { className: 'font-semibold' }, 'Actions'),
+        e('button', { onClick: forceRelease, disabled: state.status === 'idle', className: 'w-full bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-lg px-4 py-2 text-sm disabled:opacity-40' }, 'Force release current claim'),
+        e('button', { onClick: evacuate, className: 'w-full bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-lg px-4 py-2 text-sm' }, 'Evacuate Ollama (keep_alive=0)'),
+        e('p', { className: 'text-xs text-gray-500' }, 'Agent-to-agent handoff: use the ', e('code', { className: 'mono text-accent' }, 'gpu.handoff'), ' tool in chat to delegate work to another Polymath instance.')
+      )
+    ),
+
+    state.history && state.history.length > 0 && e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
+      e('h3', { className: 'font-semibold mb-2 text-sm' }, 'Recent events'),
+      e('ul', { className: 'space-y-1 text-xs mono' }, state.history.slice(-10).reverse().map((h, i) =>
+        e('li', { key: i, className: 'flex items-center gap-2 text-gray-400' },
+          e('span', { className: 'text-gray-600' }, new Date(h.ts).toLocaleTimeString()),
+          e('span', { className: 'text-accent' }, h.event),
+          h.owner && e('span', { className: 'text-gray-500' }, h.owner),
+          h.reason && e('span', { className: 'text-gray-600' }, '· ' + h.reason)
+        )
+      ))
+    )
+  );
+}
+
+// ---------- Settings ----------
+const PROVIDERS = [
+  { id: 'ollama', label: 'Ollama', tag: 'local', defaultUrl: 'http://localhost:11434/v1', notes: 'Local models — free, offline.' },
+  { id: 'lmstudio', label: 'LM Studio', tag: 'local', defaultUrl: 'http://localhost:1234/v1', notes: 'Local GUI for GGUF models.' },
+  { id: 'openai', label: 'OpenAI', tag: 'cloud', defaultUrl: 'https://api.openai.com/v1', notes: 'GPT-4o, o1, etc.' },
+  { id: 'anthropic', label: 'Anthropic', tag: 'cloud', defaultUrl: 'https://api.anthropic.com', notes: 'Claude family.' },
+  { id: 'google', label: 'Google Gemini', tag: 'cloud', defaultUrl: '', notes: 'Gemini 2.0, 1.5 Pro.' },
+  { id: 'openrouter', label: 'OpenRouter', tag: 'cloud', defaultUrl: 'https://openrouter.ai/api/v1', notes: 'Unified proxy to 100+ models.' },
+  { id: 'groq', label: 'Groq', tag: 'cloud', defaultUrl: 'https://api.groq.com/openai/v1', notes: 'Fast LPU inference.' },
+  { id: 'together', label: 'Together AI', tag: 'cloud', defaultUrl: 'https://api.together.xyz/v1', notes: 'Hosted open models.' },
+  { id: 'azure', label: 'Azure OpenAI', tag: 'cloud', defaultUrl: 'https://YOUR-RESOURCE.openai.azure.com/openai/v1', notes: 'Requires deployment name as model.' },
+  { id: 'mistral', label: 'Mistral', tag: 'cloud', defaultUrl: 'https://api.mistral.ai/v1', notes: 'Mistral / Codestral family.' },
+  { id: 'deepseek', label: 'DeepSeek', tag: 'cloud', defaultUrl: 'https://api.deepseek.com/v1', notes: 'Cheap reasoning models.' },
+  { id: 'cohere', label: 'Cohere', tag: 'cloud', defaultUrl: 'https://api.cohere.ai/compatibility/v1', notes: 'Command R family.' },
+  { id: 'custom', label: 'Custom', tag: 'any', defaultUrl: '', notes: 'Any OpenAI-compatible endpoint.' },
+];
+
+function SettingsPanel({ onLlmChange }) {
+  const [data, , reload] = useFetch('/api/config');
+  const [provider, setProvider] = React.useState('');
+  const [model, setModel] = React.useState('');
+  const [baseUrl, setBaseUrl] = React.useState('');
+  const [apiKey, setApiKey] = React.useState('');
+  const [temp, setTemp] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (data) {
+      setProvider(data.llm?.provider || '');
+      setModel(data.llm?.model || '');
+      setBaseUrl(data.llm?.base_url || '');
+      setApiKey(data.llm?.api_key || '');
+      setTemp(String(data.llm?.temperature ?? 0.7));
+    }
+  }, [data]);
+
+  const pickProvider = (p) => {
+    setProvider(p.id);
+    if (p.defaultUrl && !baseUrl) setBaseUrl(p.defaultUrl);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api('/api/settings/llm', { method: 'POST', body: JSON.stringify({ provider, model, base_url: baseUrl, api_key: apiKey === '***' ? undefined : apiKey, temperature: parseFloat(temp) }) });
+      toast('Saved and hot-swapped', 'success');
+      onLlmChange?.();
+      reload();
+    } catch (err) { toast(err.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const selected = PROVIDERS.find(p => p.id === provider);
+
+  return e('div', { className: 'p-6 space-y-6 max-w-3xl' },
+    e('h2', { className: 'text-xl font-semibold' }, 'Settings'),
+
+    e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-5 space-y-4' },
+      e('div', null,
+        e('h3', { className: 'font-semibold mb-1' }, 'LLM Provider'),
+        e('p', { className: 'text-sm text-gray-500' }, 'Changes apply immediately — no restart. Local providers are free.')
+      ),
+      e('div', { className: 'grid grid-cols-2 md:grid-cols-3 gap-2' }, PROVIDERS.map(p =>
+        e('button', {
+          key: p.id, onClick: () => pickProvider(p),
+          className: 'px-3 py-2 rounded-lg border text-sm text-left ' + (provider === p.id ? 'border-accent bg-accent/10 text-accent' : 'border-bg-700 bg-bg-700/50 text-gray-300 hover:border-bg-600'),
+        },
+          e('div', { className: 'flex items-center justify-between' }, e('span', { className: 'font-medium' }, p.label), e('span', { className: 'text-[10px] uppercase mono ' + (p.tag === 'local' ? 'text-green-400' : p.tag === 'cloud' ? 'text-blue-400' : 'text-gray-500') }, p.tag)),
+          e('div', { className: 'text-xs text-gray-500 mt-0.5' }, p.notes)
+        )
+      )),
+
+      e('div', { className: 'grid grid-cols-2 gap-3' },
+        e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Base URL'),
+          e('input', { value: baseUrl, onChange: ev => setBaseUrl(ev.target.value), className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim', placeholder: selected?.defaultUrl || 'https://…' })),
+        e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'API Key'),
+          e('input', { type: 'password', value: apiKey, onChange: ev => setApiKey(ev.target.value), className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim', placeholder: '(blank for local)' })),
+        e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Model'),
+          e('input', { value: model, onChange: ev => setModel(ev.target.value), className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim', placeholder: 'qwen2.5-coder:7b' })),
+        e('div', null, e('label', { className: 'text-xs text-gray-500 uppercase tracking-wide block mb-1' }, 'Temperature'),
+          e('input', { type: 'number', step: '0.1', min: '0', max: '2', value: temp, onChange: ev => setTemp(ev.target.value), className: 'w-full bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
+          e('p', { className: 'text-[10px] text-gray-600 mt-0.5' }, '0 = deterministic, 1 = balanced, 2 = chaotic'))
+      ),
+      e('div', { className: 'flex items-center gap-3' },
+        e('button', { onClick: save, disabled: saving, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 py-2 text-sm disabled:opacity-50' }, saving ? 'Saving…' : 'Apply')
+      )
+    ),
+
+    data && e('details', { className: 'bg-bg-800 border border-bg-700 rounded-xl' },
+      e('summary', { className: 'px-4 py-3 cursor-pointer text-sm font-medium text-gray-400' }, 'Raw config (~/.polymath/polymath.json, secrets redacted)'),
+      e('pre', { className: 'px-4 pb-4 text-xs mono overflow-auto max-h-96 scrollbar-thin' }, JSON.stringify(data, null, 2))
+    )
+  );
+}
+
+// ---------- App ----------
+const PANELS = {
+  Chat: ChatPanel, Dashboard: DashboardPanel, Tools: ToolsPanel, Sessions: SessionsPanel,
+  Skills: SkillsPanel, Cron: CronPanel, Memory: MemoryPanel, Media: MediaPanel, Channels: ChannelsPanel,
+  MCP: McpPanel, GPU: GpuPanel, Audit: AuditPanel, Doctor: DoctorPanel, Settings: SettingsPanel,
+};
+
+function App() {
+  const [tab, setTab] = React.useState(() => localStorage.getItem('polymath_tab') || 'Chat');
+  const [doctor, setDoctor] = React.useState(null);
+  const [llmInfo, setLlmInfo] = React.useState(null);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  const reloadLlm = React.useCallback(() => {
+    api('/api/models').then(d => setLlmInfo({ provider: d.provider, model: d.current })).catch(() => {});
+    setRefreshKey(k => k + 1);
+  }, []);
+
+  React.useEffect(() => {
+    const tick = () => { api('/api/doctor').then(setDoctor).catch(() => {}); };
+    tick(); const id = setInterval(tick, 10000); return () => clearInterval(id);
+  }, []);
+  React.useEffect(() => { reloadLlm(); }, [reloadLlm]);
+  React.useEffect(() => { localStorage.setItem('polymath_tab', tab); }, [tab]);
+
+  const Panel = PANELS[tab];
+
+  return e('div', { className: 'flex h-screen' },
+    e('aside', { className: 'w-60 flex flex-col bg-bg-800 border-r border-bg-700 flex-shrink-0' },
+      e(Logo),
+      e('nav', { className: 'flex-1 overflow-y-auto scrollbar-thin py-2' }, NAV.map(n =>
+        e('button', {
+          key: n.id, onClick: () => setTab(n.id),
+          className: 'w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors ' + (tab === n.id ? 'bg-accent/15 text-accent border-l-2 border-accent' : 'text-gray-400 hover:text-white hover:bg-bg-700/50 border-l-2 border-transparent'),
+        }, e(n.icon), n.label)
+      )),
+      e(StatusBar, { doctor })
+    ),
+    e('main', { className: 'flex-1 flex flex-col min-w-0' },
+      e('header', { className: 'flex items-center justify-between px-6 py-3 border-b border-bg-700 flex-shrink-0' },
+        e('div', { className: 'text-sm text-gray-400' },
+          e('span', { className: 'mono text-xs text-gray-600' }, 'gateway '),
+          e('span', { className: 'text-accent mono text-xs' }, 'localhost:18789')
+        ),
+        e(ModelPicker, { current: llmInfo, onChange: reloadLlm })
+      ),
+      e('div', { key: tab + '-' + refreshKey, className: 'flex-1 overflow-y-auto scrollbar-thin min-h-0' },
+        tab === 'Settings' ? e(Panel, { onLlmChange: reloadLlm }) : e(Panel)
+      )
+    )
   );
 }
 

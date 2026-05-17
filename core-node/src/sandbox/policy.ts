@@ -1,9 +1,58 @@
 import { z } from "zod";
 
 export const SandboxPolicySchema = z.object({
-  allow: z.array(z.string()).default(["core.*"]),
+  // Default allows mirror the agent's expected surface: core lifecycle,
+  // memory + media catalog ops, gpu lease management, MCP tool fan-out,
+  // skills, comms (channel send to known transports), web search/fetch,
+  // and read-only filesystem helpers. Anything genuinely dangerous —
+  // terminal shell exec, writing files, spawning processes, browser
+  // automation — sits in `requireApproval` instead so the orchestrator
+  // can prompt the user.
+  allow: z.array(z.string()).default([
+    "core.*",
+    "memory.*",
+    "media.*",
+    "media-memory.*",       // C++ MCP server fan-out
+    "gpu.*",
+    "skill.*",
+    "skills.*",
+    "comms.*",
+    "channel.*",
+    "session.*",
+    "sessions.*",
+    "history.*",
+    "cron.*",
+    "files.read",
+    "files.stat",
+    "files.glob",
+    "files.fs_read",
+    "files.fs_stat",
+    "files.fs_glob",
+    "files.fs_list",
+    "web.search",
+    "web.fetch",
+    "web.fetch_text",
+    "vision.*",
+    "voice.*",
+    "media-memory.search",
+    "media-memory.index",
+    "media-memory.recall",
+  ]),
   deny: z.array(z.string()).default([]),
-  requireApproval: z.array(z.string()).default([]),
+  // Tools that genuinely change machine state — gate behind approval queue.
+  requireApproval: z.array(z.string()).default([
+    "terminal.run",
+    "terminal.exec",
+    "files.write",
+    "files.fs_write",
+    "files.fs_append",
+    "files.fs_delete",
+    "processes.spawn",
+    "processes.kill",
+    "browser.*",
+    "code_exec.*",
+    "input.*",                // virtual-input MCP — keystrokes/clicks
+  ]),
   maxCallsPerMinute: z.record(z.string(), z.number()).default({}),
   fsAllow: z.array(z.string()).default([]),
   fsDeny: z.array(z.string()).default([]),

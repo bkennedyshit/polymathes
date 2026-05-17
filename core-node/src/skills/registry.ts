@@ -1,9 +1,14 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { EpisodeContext } from "../orchestrator/loop.js";
 import { invokeSkill } from "./invoke.js";
+
+function expandHome(p: string): string {
+  return p.startsWith("~") ? p.replace(/^~/, homedir()) : p;
+}
 
 export interface SkillDef {
   name: string;
@@ -12,6 +17,10 @@ export interface SkillDef {
   author?: string;
   tags?: string[];
   toolsets?: string[];
+  /** Optional specialist model (e.g. "qwen2.5vl:7b") that this skill needs.
+   * When set, the skill invoker swaps Ollama to this model for the duration
+   * of the skill and swaps back to the parent's model afterward. */
+  model?: string;
   prompt_file: string;
 }
 
@@ -27,9 +36,18 @@ export interface SkillDef {
  */
 export type SkillContextProvider = () => Omit<EpisodeContext, "sessionId"> & { sessionId: string };
 
+export interface SkillRegistryOptions {
+  gpuBroker?: import("../gpu/broker.js").GpuBroker;
+  ollamaUrl?: string;
+  getParentModel?: () => string;
+  mediaEpisodic?: import("../memory/media_episodic.js").MediaEpisodic;
+  mediaWorkflow?: import("../memory/media_workflow.js").MediaWorkflow;
+}
+
 export class SkillRegistry {
   private skills = new Map<string, SkillDef>();
   private contextProvider: SkillContextProvider | null = null;
+  private deps: SkillRegistryOptions = {};
 
   /**
    * Install the context provider. Until this is called, skill invocations
@@ -39,8 +57,13 @@ export class SkillRegistry {
     this.contextProvider = provider;
   }
 
+  /** Wire the GPU broker + parent-model accessor so model-swap skills work. */
+  setDeps(deps: SkillRegistryOptions): void {
+    this.deps = { ...this.deps, ...deps };
+  }
+
   discover(workspacePath: string, toolRegistry?: ToolRegistry): void {
-    const skillsDir = join(workspacePath, "skills");
+    const skillsDir = join(expandHome(workspacePath), "skills");
     const files = findSkillFiles(skillsDir);
     for (const file of files) {
       try {
@@ -54,6 +77,7 @@ export class SkillRegistry {
           author: frontmatter.author,
           tags: frontmatter.tags,
           toolsets: frontmatter.toolsets,
+          model: frontmatter.model,
           prompt_file: file,
         };
         this.skills.set(def.name, def);
@@ -69,7 +93,13 @@ export class SkillRegistry {
               }
               const { input } = args as { input: string };
               const ctx = this.contextProvider();
-              const result = await invokeSkill(def, { input }, ctx);
+              const result = await invokeSkill(def, { input }, ctx, {
+                gpuBroker: this.deps.gpuBroker,
+                ollamaUrl: this.deps.ollamaUrl,
+                parentModel: this.deps.getParentModel?.(),
+                mediaEpisodic: this.deps.mediaEpisodic,
+                mediaWorkflow: this.deps.mediaWorkflow,
+              });
               return { ok: true, result };
             },
             toolset: "skills",

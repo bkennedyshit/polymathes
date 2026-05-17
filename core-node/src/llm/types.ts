@@ -29,6 +29,9 @@ export interface CompletionOptions {
   temperature?: number;
   max_tokens?: number;
   signal?: AbortSignal;
+  /** Per-call model override. Lets a skill run on a different model than the
+   * parent adapter was configured with (e.g. a vision model for media work). */
+  model?: string;
 }
 
 export interface LlmAdapter {
