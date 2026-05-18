@@ -12,6 +12,7 @@ import { ApprovalQueue } from "./security/approval.js";
 import { OpenAiAdapter } from "./llm/openai.js";
 import { AnthropicAdapter } from "./llm/anthropic.js";
 import { GoogleAdapter } from "./llm/google.js";
+import { OpenAiCodexAdapter } from "./llm/codex/responses_adapter.js";
 import { WorkingMemory } from "./memory/working.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import { runEpisode } from "./orchestrator/loop.js";
@@ -42,6 +43,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Polymath package version. Surfaced in the Codex adapter's User-Agent
+ * header so OpenAI's traffic logs can attribute requests. Bump in lockstep
+ * with `core-node/package.json` and `program.version()` in `cli.ts`.
+ */
+const PACKAGE_VERSION = "0.1.1";
 
 export interface BootOptions {
   config?: string;
@@ -89,14 +97,40 @@ function createLlmAdapter(config: AppConfig): LlmAdapter {
   const base_url = config.llm.base_url ?? defaults.base_url;
   const api_key  = config.llm.api_key  || defaults.api_key || "";
 
-  if (provider === "anthropic") {
-    return new AnthropicAdapter({ base_url, api_key, model: config.llm.model, streaming: config.llm.streaming });
+  switch (provider) {
+    case "anthropic":
+      return new AnthropicAdapter({ base_url, api_key, model: config.llm.model, streaming: config.llm.streaming });
+    case "google":
+      return new GoogleAdapter({ api_key, model: config.llm.model });
+    case "openai-codex":
+      // Codex adapter reads tokens from the auth store on every call;
+      // base_url/api_key from config are ignored.
+      return new OpenAiCodexAdapter({
+        version: PACKAGE_VERSION,
+        model: config.llm.model,
+        streaming: config.llm.streaming,
+      });
+    case "openai":
+    case "ollama":
+    case "lmstudio":
+    case "openrouter":
+    case "groq":
+    case "together":
+    default:
+      // openai, ollama, lmstudio, openrouter, groq, together, or any
+      // openai-compat endpoint.
+      return new OpenAiAdapter({ base_url, api_key, model: config.llm.model, streaming: config.llm.streaming });
   }
-  if (provider === "google") {
-    return new GoogleAdapter({ api_key, model: config.llm.model });
-  }
-  // openai, ollama, lmstudio, openrouter, groq, together, or any openai-compat endpoint
-  return new OpenAiAdapter({ base_url, api_key, model: config.llm.model, streaming: config.llm.streaming });
+}
+
+/**
+ * Public factory wrapper for tests + future callers that want to
+ * construct an adapter without booting the full runtime. Accepts a
+ * partial llm config; missing optional fields fall through to the
+ * adapter's own defaults.
+ */
+export function buildLlm(llm: Partial<AppConfig["llm"]> & { provider: string }): LlmAdapter {
+  return createLlmAdapter({ llm } as AppConfig);
 }
 
 export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
@@ -118,13 +152,19 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
   const mediaEpisodic = new MediaEpisodic(db);
   const mediaWorkflow = new MediaWorkflow(db);
 
-  // Embedder — Ollama nomic-embed-text when we're on a local provider,
-  // NullEmbedder otherwise (cloud providers don't have our embedding model).
-  // Users can override in config later if they want OpenAI embeddings.
+  // Embedder + local-fleet URL — when the orchestrator is cloud (codex /
+  // anthropic / google / openai), users can still keep their Ollama fleet
+  // running for embeddings, vision skills, and the GPU broker. We honor
+  // memory.embedder_base_url for that case; otherwise we fall back to the
+  // llm base_url for local providers, and to NullEmbedder when no local
+  // Ollama is available at all.
   const isLocalLlm = config.llm.provider === "ollama" || config.llm.provider === "lmstudio";
-  const embedder: Embedder = isLocalLlm
+  const localFleetBaseUrl: string | undefined = config.memory.embedder_base_url
+    ?? (isLocalLlm ? (config.llm.base_url ?? "http://localhost:11434/v1") : undefined);
+  const localFleetApi = localFleetBaseUrl?.replace(/\/v1\/?$/, "");
+  const embedder: Embedder = localFleetApi
     ? new OllamaEmbedder({
-        baseUrl: (config.llm.base_url ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, ""),
+        baseUrl: localFleetApi,
         model: config.memory.embedding_model || "nomic-embed-text",
       })
     : new NullEmbedder();
@@ -142,11 +182,13 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
   // Wire memory tools to the backends so memory.note / media.query / etc work.
   setMemoryBackend(episodicMemory, semanticMemory, embedder, mediaEpisodic, mediaWorkflow);
 
-  // GPU Broker — dormant when LLM is not a local endpoint.
-  const LOCAL_PROVIDERS = new Set(["ollama", "lmstudio"]);
+  // GPU Broker — stays alive whenever a local Ollama fleet is reachable,
+  // even with a cloud orchestrator (codex/anthropic/google). The broker
+  // arbitrates VRAM for vision skills, model swap, and skill specialists
+  // — those still run locally even when GPT does the high-level reasoning.
   const gpuBroker = new GpuBroker({
-    ollamaUrl: (config.llm.base_url ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, ""),
-    dormant: !LOCAL_PROVIDERS.has(config.llm.provider),
+    ollamaUrl: localFleetApi ?? "http://localhost:11434",
+    dormant: !localFleetApi,
     logger,
   });
   await gpuBroker.init();
@@ -157,10 +199,13 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
   skillRegistry.discover(config.runtime.home_dir, toolRegistry);
 
   // Wire the GPU broker + model accessor into the skill registry so
-  // model-swap skills can coordinate VRAM through the broker.
+  // model-swap skills can coordinate VRAM through the broker. The
+  // skill specialists need a local Ollama url even when the
+  // orchestrator is cloud; localFleetApi is undefined only when no
+  // local fleet is configured at all.
   skillRegistry.setDeps({
     gpuBroker,
-    ollamaUrl: (config.llm.base_url ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, ""),
+    ollamaUrl: localFleetApi ?? "http://localhost:11434",
     getParentModel: () => config.llm.model,
     mediaEpisodic,
     mediaWorkflow,

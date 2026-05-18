@@ -127,6 +127,39 @@ For the C++ media-memory binary you'll need CUDA 11.8 + TensorRT 10.16 + CMake. 
 
 ---
 
+## Quick start with your ChatGPT subscription (no API key required)
+
+If you already pay for ChatGPT Plus / Pro / Business, you can use the same auth your Codex CLI uses. Polymath orchestrates the conversation through GPT-5.5, while your local Ollama fleet keeps doing embeddings, vision, and skill specialists. **Free if you already have the sub. No new credit card.**
+
+```powershell
+# If you have Codex CLI installed already, copy its tokens over:
+node dist\polymath.cjs llm import-codex
+
+# Otherwise sign in through your browser (PKCE flow, just like Codex CLI):
+node dist\polymath.cjs llm login
+
+# Flip your provider in ~/.polymath/polymath.json:
+#   "llm": { "provider": "openai-codex", "model": "gpt-5.5" }
+# Optional: keep your local Ollama for embeddings and vision skills:
+#   "memory": { "embedder_base_url": "http://localhost:11434/v1" }
+
+# Boot — GPT-5.5 orchestrates, your RTX still serves embeddings + vision.
+node dist\polymath.cjs
+```
+
+Refresh, model swap, doctor checks, all wired in:
+
+```powershell
+node dist\polymath.cjs llm status     # token freshness + account id
+node dist\polymath.cjs llm models     # what your account can call (24h cache)
+node dist\polymath.cjs llm logout     # wipe the local tokens
+node dist\polymath.cjs doctor         # codex_auth check shows up here
+```
+
+**Posture:** Tokens stay on your machine in `~/.polymath/codex-auth.json` (mode 0600). Polymath never proxies your account, pools tokens, or batches requests across users. This is the same posture Codex CLI itself uses — the upstream tolerates legitimate desktop clients on personal accounts. Don't share your token; you're the only person who should be using it.
+
+---
+
 ## Configuration
 
 Polymath reads `~/.polymath/polymath.json` (auto-created on first boot). Key settings:

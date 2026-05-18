@@ -61,6 +61,26 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     const currentModel = ctx.config.llm.model;
     const baseUrl = ctx.config.llm.base_url;
 
+    // Codex (subscription) provider — defer to the dedicated discovery
+    // cache so we don't double-fetch.
+    if (provider === "openai-codex") {
+      try {
+        const { discoverModels } = await import("../llm/codex/models.js");
+        const cache = await discoverModels({ version: "0.1.1" });
+        return c.json({
+          provider,
+          current: currentModel,
+          models: cache.models.map((m) => m.id).sort(),
+        });
+      } catch {
+        // ChatGPT-account-tier models. `/v1/models` is gated behind
+        // Cloudflare's challenge for non-browser UA so we ship a
+        // hardcoded fallback list. Slugs sourced from `~/.codex/models_cache.json`
+        // on a real ChatGPT account.
+        return c.json({ provider, current: currentModel, models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"] });
+      }
+    }
+
     // Providers we can probe at runtime
     const probeProviders = new Set(["ollama", "lmstudio", "openai", "openrouter", "groq", "together"]);
     if (probeProviders.has(provider) && baseUrl) {
@@ -235,66 +255,128 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     // LLM provider — try to list models.
     {
       const t0 = Date.now();
-      const baseUrl = ctx.config.llm.base_url;
-      if (!baseUrl) {
-        checks.push({ label: "LLM provider", status: "warn", detail: "no base_url configured" });
-      } else {
+      const provider = ctx.config.llm.provider;
+      if (provider === "openai-codex") {
+        // Codex auth is its own check below; we just confirm the
+        // adapter can resolve a token without erroring.
         try {
-          const headers: Record<string, string> = {};
-          if (ctx.config.llm.api_key) headers.authorization = `Bearer ${ctx.config.llm.api_key}`;
-          const url = baseUrl.replace(/\/+$/, "") + "/models";
-          const r = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+          const { ensureFreshToken } = await import("../llm/codex/auth_refresh.js");
+          const tokens = await ensureFreshToken();
           checks.push({
-            label: `LLM (${ctx.config.llm.provider})`,
-            status: r.ok ? "ok" : "error",
+            label: `LLM (openai-codex)`,
+            status: "ok",
             latency_ms: Date.now() - t0,
-            detail: r.ok ? `model: ${ctx.config.llm.model}` : `HTTP ${r.status}`,
+            detail: `account ${tokens.account_id}, model ${ctx.config.llm.model}`,
           });
         } catch (e: any) {
           checks.push({
-            label: `LLM (${ctx.config.llm.provider})`,
+            label: `LLM (openai-codex)`,
+            status: "error",
+            latency_ms: Date.now() - t0,
+            detail: e?.message ?? String(e),
+          });
+        }
+      } else {
+        const baseUrl = ctx.config.llm.base_url;
+        if (!baseUrl) {
+          checks.push({ label: "LLM provider", status: "warn", detail: "no base_url configured" });
+        } else {
+          try {
+            const headers: Record<string, string> = {};
+            if (ctx.config.llm.api_key) headers.authorization = `Bearer ${ctx.config.llm.api_key}`;
+            const url = baseUrl.replace(/\/+$/, "") + "/models";
+            const r = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+            checks.push({
+              label: `LLM (${provider})`,
+              status: r.ok ? "ok" : "error",
+              latency_ms: Date.now() - t0,
+              detail: r.ok ? `model: ${ctx.config.llm.model}` : `HTTP ${r.status}`,
+            });
+          } catch (e: any) {
+            checks.push({
+              label: `LLM (${provider})`,
+              status: "error",
+              latency_ms: Date.now() - t0,
+              detail: e?.message ?? String(e),
+            });
+          }
+        }
+      }
+    }
+
+    // Codex auth status (T9) — surfaced regardless of active provider so
+    // users with imported tokens can see freshness.
+    {
+      const t0 = Date.now();
+      try {
+        const { loadAuth } = await import("../llm/codex/auth_store.js");
+        const auth = await loadAuth();
+        if (!auth) {
+          checks.push({ label: "Codex auth", status: "gray", detail: "not configured" });
+        } else {
+          const ageMs = Date.now() - new Date(auth.last_refresh).getTime();
+          const ageMin = Math.round(ageMs / 60000);
+          let status: "ok" | "warn" | "error" = "ok";
+          if (ageMs > 60 * 60 * 1000) status = "error";
+          else if (ageMs > 25 * 60 * 1000) status = "warn";
+          checks.push({
+            label: "Codex auth",
+            status,
+            latency_ms: Date.now() - t0,
+            detail: `account ${auth.tokens.account_id}, last refresh ${ageMin} min ago`,
+          });
+        }
+      } catch (e: any) {
+        checks.push({
+          label: "Codex auth",
+          status: "error",
+          latency_ms: Date.now() - t0,
+          detail: e?.message ?? String(e),
+        });
+      }
+    }
+
+    // Embedder — runs against the local Ollama fleet if available, even
+    // when the orchestrator is cloud (codex / anthropic / google).
+    {
+      const t0 = Date.now();
+      const fleetBase = (ctx.config.memory.embedder_base_url
+        ?? (ctx.config.llm.provider === "ollama" || ctx.config.llm.provider === "lmstudio"
+              ? ctx.config.llm.base_url
+              : undefined))
+        ?.replace(/\/v1\/?$/, "");
+      if (!fleetBase) {
+        checks.push({ label: "Embedder", status: "warn", detail: "no local fleet configured (memory.embedder_base_url)" });
+      } else {
+        try {
+          const r = await fetch(fleetBase + "/api/embeddings", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: ctx.config.memory.embedding_model || "nomic-embed-text",
+              prompt: "doctor",
+            }),
+            signal: AbortSignal.timeout(5_000),
+          });
+          const body: any = r.ok ? await r.json() : null;
+          const haveVec = Array.isArray(body?.embedding) && body.embedding.length > 0;
+          checks.push({
+            label: "Embedder",
+            status: haveVec ? "ok" : "error",
+            latency_ms: Date.now() - t0,
+            detail: haveVec
+              ? `dim ${body.embedding.length}, model ${ctx.config.memory.embedding_model || "nomic-embed-text"}`
+              : "no embedding returned (model may not be pulled)",
+          });
+        } catch (e: any) {
+          checks.push({
+            label: "Embedder",
             status: "error",
             latency_ms: Date.now() - t0,
             detail: e?.message ?? String(e),
           });
         }
       }
-    }
-
-    // Embedder — only meaningful for local providers.
-    if (ctx.config.llm.provider === "ollama" || ctx.config.llm.provider === "lmstudio") {
-      const t0 = Date.now();
-      try {
-        const ollamaApi = (ctx.config.llm.base_url ?? "").replace(/\/v1\/?$/, "");
-        const r = await fetch(ollamaApi + "/api/embeddings", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            model: ctx.config.memory.embedding_model || "nomic-embed-text",
-            prompt: "doctor",
-          }),
-          signal: AbortSignal.timeout(5_000),
-        });
-        const body: any = r.ok ? await r.json() : null;
-        const haveVec = Array.isArray(body?.embedding) && body.embedding.length > 0;
-        checks.push({
-          label: "Embedder",
-          status: haveVec ? "ok" : "error",
-          latency_ms: Date.now() - t0,
-          detail: haveVec
-            ? `dim ${body.embedding.length}, model ${ctx.config.memory.embedding_model || "nomic-embed-text"}`
-            : "no embedding returned (model may not be pulled)",
-        });
-      } catch (e: any) {
-        checks.push({
-          label: "Embedder",
-          status: "error",
-          latency_ms: Date.now() - t0,
-          detail: e?.message ?? String(e),
-        });
-      }
-    } else {
-      checks.push({ label: "Embedder", status: "warn", detail: "non-local provider; embeddings disabled" });
     }
 
     // MCP servers
@@ -744,6 +826,108 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     if (!(ctx as any).gpuBroker) return c.json({ ok: true });
     await (ctx as any).gpuBroker.evacuateOllama();
     return c.json({ ok: true });
+  });
+
+  // ==========================================================
+  // Codex (ChatGPT subscription) auth — import / login / status / logout
+  // ==========================================================
+  app.get("/api/auth/codex/status", async (c) => {
+    const { loadAuth } = await import("../llm/codex/auth_store.js");
+    const auth = await loadAuth();
+    if (!auth) {
+      return c.json({ configured: false });
+    }
+    const ageMs = Date.now() - new Date(auth.last_refresh).getTime();
+    let state: "fresh" | "stale" | "expired" = "fresh";
+    if (ageMs > 60 * 60 * 1000) state = "expired";
+    else if (ageMs > 25 * 60 * 1000) state = "stale";
+
+    let modelsCache: any = null;
+    try {
+      const { loadModelsCache } = await import("../llm/codex/models.js");
+      modelsCache = loadModelsCache();
+    } catch { /* swallow */ }
+
+    return c.json({
+      configured: true,
+      account_id: auth.tokens.account_id,
+      last_refresh: auth.last_refresh,
+      state,
+      age_minutes: Math.round(ageMs / 60_000),
+      models: modelsCache
+        ? { fetched_at: modelsCache.fetched_at, count: modelsCache.models.length }
+        : null,
+    });
+  });
+
+  app.post("/api/auth/codex/import", async (c) => {
+    try {
+      const { importCodexAuth } = await import("../llm/codex/import_codex.js");
+      const { account_id } = await importCodexAuth({ yes: true });
+      // Update the live config so the doctor and adapter see the new state.
+      ctx.config.llm.codex_account_id = account_id;
+      return c.json({ ok: true, account_id });
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message ?? String(e) }, 400);
+    }
+  });
+
+  app.post("/api/auth/codex/logout", async (c) => {
+    const { wipeAuth } = await import("../llm/codex/auth_store.js");
+    await wipeAuth();
+    delete ctx.config.llm.codex_account_id;
+    return c.json({ ok: true });
+  });
+
+  /**
+   * SSE-style login flow. Browsers can't `EventSource` POST, so we accept
+   * GET here and emit progress events as the OAuth dance unfolds.
+   * Settings UI binds to this; CLI uses `polymath llm login` instead.
+   */
+  app.get("/api/auth/codex/login", async (c) => {
+    const { loginCodex } = await import("../llm/codex/oauth_login.js");
+    const stream = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder();
+        const send = (event: string, data: any) => {
+          controller.enqueue(enc.encode(`event: ${event}\n`));
+          controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
+        };
+        loginCodex({ onProgress: (msg) => send("progress", { msg }) })
+          .then((result) => {
+            ctx.config.llm.codex_account_id = result.account_id;
+            send("done", { account_id: result.account_id });
+            controller.close();
+          })
+          .catch((err) => {
+            send("error", { error: err?.message ?? String(err) });
+            controller.close();
+          });
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  });
+
+  /**
+   * Codex models discovery — wraps the 24h cache in `models.ts`.
+   * Settings UI populates the model dropdown from here when provider
+   * is set to `openai-codex`.
+   */
+  app.get("/api/auth/codex/models", async (c) => {
+    try {
+      const refresh = c.req.query("refresh") === "1";
+      const { discoverModels } = await import("../llm/codex/models.js");
+      const cache = await discoverModels({ version: "0.1.1", refresh });
+      return c.json(cache);
+    } catch (e: any) {
+      return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
+    }
   });
 
   return app;

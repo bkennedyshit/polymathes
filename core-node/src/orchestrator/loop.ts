@@ -71,10 +71,33 @@ export async function runEpisode(task: string, ctx: EpisodeContext): Promise<Epi
 
     // Truncate history to fit context window
     ctx.memory.clear();
-    for (const m of history) ctx.memory.add({ role: m.role, content: m.content ?? "" });
+    for (const m of history) {
+      ctx.memory.add({
+        role: m.role,
+        content: m.content ?? "",
+        // Preserve tool-calling fields end-to-end. Adapters that
+        // require paired function_call + function_call_output items
+        // (Codex Responses) break without them.
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.name ? { name: m.name } : {}),
+      });
+    }
     ctx.memory.truncate(ctx.contextWindow);
 
-    const truncated: ChatMessage[] = ctx.memory.getAll().map((m) => ({ role: m.role, content: m.content }));
+    const truncated: ChatMessage[] = ctx.memory.getAll().map((m) => ({
+      role: m.role,
+      content: m.content,
+      // Preserve tool-calling fields so adapters that round-trip them
+      // (Codex Responses, OpenAI Chat Completions with strict mode)
+      // see a complete prior turn. Dropping these caused the Codex
+      // adapter to emit `function_call_output` items without their
+      // matching `function_call`, which trips a 400
+      // `"No tool call found for function call output"`.
+      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+      ...(m.name ? { name: m.name } : {}),
+    }));
 
     const stream = ctx.llm.complete(truncated, tools, { signal: ctx.signal, model: ctx.modelOverride });
     const result = await collectStream(stream);

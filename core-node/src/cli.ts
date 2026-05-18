@@ -4,7 +4,7 @@ import { loadToken } from "./gateway/auth.js";
 const program = new Command();
 program
   .name("polymath")
-  .version("0.1.0")
+  .version("0.1.1")
   .description("Polymath agent runtime")
   .option("--config <path>", "path to config file")
   .option("--model <model>", "override LLM model")
@@ -215,6 +215,101 @@ pairCmd
     if (!pending.length) { console.log("No pending pairings"); db.close(); return; }
     for (const p of pending) console.log(`  ${p.code}  ${p.channel}  ${p.sender_id}  ${p.created_at}`);
     db.close();
+  });
+
+// ─── LLM auth + provider management ─────────────────────────────────
+const llmCmd = program.command("llm").description("Manage LLM provider auth and models");
+llmCmd
+  .command("import-codex")
+  .description("Import auth tokens from an existing Codex CLI install (~/.codex/auth.json)")
+  .option("--yes", "skip the interactive confirmation prompt")
+  .action(async (opts: { yes?: boolean }) => {
+    try {
+      const { importCodexAuth } = await import("./llm/codex/import_codex.js");
+      const { account_id } = await importCodexAuth({ yes: opts.yes });
+      console.log(`✓ Imported Codex auth (account: ${account_id}). Polymath will use it on next boot.`);
+    } catch (e: any) {
+      console.error(e?.message ?? String(e));
+      process.exit(1);
+    }
+  });
+
+llmCmd
+  .command("login")
+  .description("Sign in with ChatGPT in your default browser (uses your subscription, no API key needed)")
+  .option("--provider <name>", "auth provider", "openai-codex")
+  .action(async (opts: { provider: string }) => {
+    if (opts.provider !== "openai-codex") {
+      console.error(`Provider '${opts.provider}' has no browser login. Use --provider=openai-codex.`);
+      process.exit(1);
+    }
+    try {
+      const { loginCodex } = await import("./llm/codex/oauth_login.js");
+      console.log("Opening browser for ChatGPT sign-in… (waiting up to 5 min)");
+      const result = await loginCodex({
+        onProgress: (m) => console.log(`  ${m}`),
+      });
+      console.log(`✓ Signed in as account ${result.account_id}.`);
+      console.log("  Tokens saved to ~/.polymath/codex-auth.json");
+    } catch (e: any) {
+      console.error(`✗ ${e?.message ?? e}`);
+      process.exit(1);
+    }
+  });
+
+llmCmd
+  .command("logout")
+  .description("Wipe the local Codex auth tokens. Codex CLI's separate auth file is untouched.")
+  .action(async () => {
+    const { wipeAuth } = await import("./llm/codex/auth_store.js");
+    await wipeAuth();
+    console.log("✓ Codex auth wiped. Run `polymath llm login` to sign in again.");
+  });
+
+llmCmd
+  .command("models")
+  .description("List models available to the current Codex account (cached for 24h)")
+  .option("--refresh", "force a re-fetch ignoring the cache")
+  .option("--provider <name>", "auth provider", "openai-codex")
+  .action(async (opts: { refresh?: boolean; provider: string }) => {
+    if (opts.provider !== "openai-codex") {
+      console.error(`Provider '${opts.provider}' uses /api/models — point your gateway query there instead.`);
+      process.exit(1);
+    }
+    try {
+      const { discoverModels } = await import("./llm/codex/models.js");
+      const cache = await discoverModels({ version: "0.1.1", refresh: opts.refresh });
+      const ageMs = Date.now() - new Date(cache.fetched_at).getTime();
+      const ageMin = Math.round(ageMs / 60_000);
+      console.log(`Codex models for account ${cache.account_id} (cache age ${ageMin}m)`);
+      for (const m of cache.models) {
+        const label = m.label ? `  (${m.label})` : "";
+        console.log(`  ${m.id}${label}`);
+      }
+    } catch (e: any) {
+      console.error(`✗ ${e?.message ?? e}`);
+      process.exit(1);
+    }
+  });
+
+llmCmd
+  .command("status")
+  .description("Show Codex auth freshness without making an API call")
+  .action(async () => {
+    const { loadAuth } = await import("./llm/codex/auth_store.js");
+    const auth = await loadAuth();
+    if (!auth) {
+      console.log("(no codex auth — run `polymath llm import-codex` or `polymath llm login`)");
+      return;
+    }
+    const ageMs = Date.now() - new Date(auth.last_refresh).getTime();
+    const ageMin = Math.round(ageMs / 60_000);
+    let state = "fresh";
+    if (ageMs > 60 * 60 * 1000) state = "expired (refresh required)";
+    else if (ageMs > 25 * 60 * 1000) state = "stale (will refresh on next call)";
+    console.log(`account:      ${auth.tokens.account_id}`);
+    console.log(`last refresh: ${auth.last_refresh}`);
+    console.log(`state:        ${state} (${ageMin}m ago)`);
   });
 
 const mcpCmd = program.command("mcp").description("MCP operations");

@@ -1,6 +1,22 @@
+import type { ToolCall } from "../llm/types.js";
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /**
+   * Tool calls emitted by an assistant turn. Adapters that demand
+   * paired `function_call` + `function_call_output` items (Codex
+   * Responses, OpenAI Chat Completions strict) reject conversations
+   * where these are missing on the prior turn.
+   */
+  tool_calls?: ToolCall[];
+  /**
+   * Set on `role: "tool"` messages to bind the result back to the
+   * call_id the model emitted. Required by every Responses-style API.
+   */
+  tool_call_id?: string;
+  /** Optional name on tool-result messages (some adapters surface it). */
+  name?: string;
 }
 
 export class WorkingMemory {

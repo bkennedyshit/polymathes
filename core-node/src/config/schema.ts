@@ -14,6 +14,13 @@ const LlmSchema = z.object({
   streaming: z.boolean().default(true),
   context_window: z.number().int().default(128000),
   temperature: z.number().default(0.7),
+  /**
+   * UI-only display field for the openai-codex provider — populated
+   * by the gateway after import/login so Settings can show "signed in
+   * as <account>". The adapter does NOT read this; it pulls the
+   * account_id from the token store on every call.
+   */
+  codex_account_id: z.string().optional(),
 });
 
 const OrchestratorSchema = z.object({
@@ -92,6 +99,15 @@ const RecallWeightsSchema = z.object({
 const MemorySchema = z.object({
   consolidation_model: z.string().default('gpt-4o-mini'),
   embedding_model: z.string().default('text-embedding-3-small'),
+  /**
+   * Optional Ollama URL used for embeddings and GPU brokering when the
+   * primary LLM provider is a cloud one (openai-codex, anthropic, etc).
+   * Lets the orchestrator run in the cloud while skill specialists,
+   * vision models, and embeddings stay local on the user's GPU.
+   * Falls back to llm.base_url when the LLM provider is itself ollama
+   * or lmstudio.
+   */
+  embedder_base_url: z.string().optional(),
   recall_weights: RecallWeightsSchema.default({ semantic: 0.5, episodic: 0.3, recency: 0.2 }),
 });
 
