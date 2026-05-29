@@ -152,6 +152,13 @@ export MNEME_NATIVE_BIN=/path/to/omni-search   # Mneme delegates the heavy lifti
 | `MNEME_NATIVE_BIN` | – | path to the C++ engine |
 | `MNEME_TOP_K` / `MNEME_MIN_SCORE` | `10` / `0.25` | search defaults |
 
+## Also the backend for polymathes itself
+
+polymathes' own agent ships the `media_*` tools as stubs that expect an external
+media-memory MCP server (`core-node/src/tools/builtin/media.ts`). Mneme is a
+drop-in for that role — so the same server powers both your polymathes agent and
+any third-party MCP host.
+
 ## Status
 
 v0.1 — extracted from polymathes as a standalone, MCP-native component. Portable
