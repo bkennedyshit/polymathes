@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mneme-mcp"
+version = "0.1.0"
+description = "Local visual memory for any AI agent — CLIP search over your photos & video, exposed as an MCP server."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Bill Kennedy", email = "bkennedyshit@users.noreply.github.com" }]
+keywords = ["mcp", "clip", "semantic-search", "visual-memory", "agents", "openclaw", "hermes", "claude"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "mcp>=1.2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Real semantic embeddings. Without this, Mneme runs on a deterministic
+# fallback embedder (plumbing only — not semantically meaningful).
+clip = [
+    "open-clip-torch>=2.24",
+    "torch>=2.1",
+    "pillow>=10.0",
+]
+# Video frame extraction so reels/clips become searchable.
+video = [
+    "opencv-python-headless>=4.8",
+]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.4",
+]
+all = ["mneme-mcp[clip,video]"]
+
+[project.urls]
+Homepage = "https://github.com/bkennedyshit/polymathes/tree/main/mneme"
+Source = "https://github.com/bkennedyshit/polymathes"
+
+[project.scripts]
+# MCP hosts launch this single command over stdio.
+mneme-mcp = "mneme.server:main"
+# Human-facing CLI: serve / index / search / info.
+mneme = "mneme.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mneme"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
