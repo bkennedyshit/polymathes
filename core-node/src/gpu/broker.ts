@@ -96,6 +96,19 @@ export class GpuBroker {
     this.pollTimer = setInterval(() => this.poll().catch(() => {}), this.opts.pollMs);
   }
 
+  /**
+   * Re-measure the VRAM baseline. Call this after a deliberate model
+   * warmup so the broker doesn't treat the warmed model as an external
+   * claim. The new baseline becomes "current VRAM usage is normal".
+   */
+  async recalibrateBaseline(): Promise<void> {
+    if (this.opts.dormant) return;
+    const snap = await this.snapshotGpu();
+    this.state.vram_baseline_mb = snap.used;
+    this.state.loaded_models = snap.loadedModels;
+    this.log("info", `gpu broker baseline recalibrated — ${snap.used}/${snap.total} MB`);
+  }
+
   shutdown(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.holdTimer) clearTimeout(this.holdTimer);

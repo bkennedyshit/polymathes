@@ -337,16 +337,26 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     }
 
     // Embedder — runs against the local Ollama fleet if available, even
-    // when the orchestrator is cloud (codex / anthropic / google).
+    // when the orchestrator is cloud (codex / anthropic / google). Auto-
+    // probes localhost:11434 when no explicit fleet URL is configured so
+    // the check reflects the same auto-detection boot does.
     {
       const t0 = Date.now();
-      const fleetBase = (ctx.config.memory.embedder_base_url
-        ?? (ctx.config.llm.provider === "ollama" || ctx.config.llm.provider === "lmstudio"
+      const explicit = (ctx.config.memory.embedder_base_url && ctx.config.memory.embedder_base_url.trim())
+        ? ctx.config.memory.embedder_base_url
+        : (ctx.config.llm.provider === "ollama" || ctx.config.llm.provider === "lmstudio"
               ? ctx.config.llm.base_url
-              : undefined))
-        ?.replace(/\/v1\/?$/, "");
+              : undefined);
+      let fleetBase = explicit?.replace(/\/v1\/?$/, "");
+      // Auto-probe for cloud orchestrators with no explicit fleet URL.
       if (!fleetBase) {
-        checks.push({ label: "Embedder", status: "warn", detail: "no local fleet configured (memory.embedder_base_url)" });
+        try {
+          const probe = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(800) });
+          if (probe.ok) fleetBase = "http://localhost:11434";
+        } catch { /* no local Ollama */ }
+      }
+      if (!fleetBase) {
+        checks.push({ label: "Embedder", status: "warn", detail: "no local Ollama detected — semantic recall disabled (FTS still works)" });
       } else {
         try {
           const r = await fetch(fleetBase + "/api/embeddings", {

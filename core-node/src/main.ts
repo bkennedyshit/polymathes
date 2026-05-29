@@ -22,7 +22,7 @@ import { SkillRegistry } from "./skills/registry.js";
 import { setScheduler } from "./tools/builtin/cron.js";
 import { setSessionStore, setTransportHub, setSubagentSpawner, type SessionStoreLike, type TransportHubLike } from "./tools/builtin/comms.js";
 import { setGpuBroker } from "./tools/builtin/gpu.js";
-import { setMemoryBackend, setMediaToolRouter } from "./tools/builtin/memory.js";
+import { setMemoryBackend, setMediaToolRouter, setMediaMcpRegistry } from "./tools/builtin/memory.js";
 import { GpuBroker } from "./gpu/broker.js";
 import { SemanticMemory } from "./memory/semantic.js";
 import { OllamaEmbedder, NullEmbedder, type Embedder } from "./memory/embed.js";
@@ -154,18 +154,48 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
 
   // Embedder + local-fleet URL — when the orchestrator is cloud (codex /
   // anthropic / google / openai), users can still keep their Ollama fleet
-  // running for embeddings, vision skills, and the GPU broker. We honor
-  // memory.embedder_base_url for that case; otherwise we fall back to the
-  // llm base_url for local providers, and to NullEmbedder when no local
-  // Ollama is available at all.
+  // running for embeddings, vision skills, and the GPU broker. Resolution
+  // order:
+  //   1. Explicit memory.embedder_base_url (user opted in).
+  //   2. For local LLM providers (ollama/lmstudio): reuse the llm base_url.
+  //   3. For cloud providers: auto-probe localhost:11434 — if Ollama is
+  //      reachable AND the embedding model is pulled, use it. This makes
+  //      "cloud brain + local embeddings/vision" work out of the box with
+  //      no config, matching how a downloaded build should behave.
+  //   4. Otherwise NullEmbedder (FTS-only recall, no semantic vectors).
   const isLocalLlm = config.llm.provider === "ollama" || config.llm.provider === "lmstudio";
-  const localFleetBaseUrl: string | undefined = config.memory.embedder_base_url
-    ?? (isLocalLlm ? (config.llm.base_url ?? "http://localhost:11434/v1") : undefined);
+  const embeddingModel = config.memory.embedding_model || "nomic-embed-text";
+  let localFleetBaseUrl: string | undefined = (config.memory.embedder_base_url && config.memory.embedder_base_url.trim())
+    ? config.memory.embedder_base_url
+    : (isLocalLlm ? (config.llm.base_url ?? "http://localhost:11434/v1") : undefined);
+
+  // Auto-probe for cloud orchestrators with no explicit embedder URL.
+  if (!localFleetBaseUrl && !isLocalLlm) {
+    const probeUrl = "http://localhost:11434";
+    try {
+      const r = await fetch(probeUrl + "/api/tags", { signal: AbortSignal.timeout(800) });
+      if (r.ok) {
+        const body: any = await r.json().catch(() => null);
+        const models: string[] = (body?.models ?? []).map((m: any) => m?.name ?? "").filter(Boolean);
+        // Match the embedding model by prefix (handles ":latest" suffix).
+        const have = models.some((m) => m === embeddingModel || m.startsWith(embeddingModel + ":") || m.split(":")[0] === embeddingModel.split(":")[0]);
+        if (have) {
+          localFleetBaseUrl = probeUrl + "/v1";
+          logger.info(`auto-detected local Ollama fleet for embeddings (${embeddingModel})`);
+        } else {
+          logger.warn(`local Ollama is up but '${embeddingModel}' isn't pulled — embeddings disabled. Run: ollama pull ${embeddingModel}`);
+        }
+      }
+    } catch {
+      // No local Ollama — cloud-only deployment. Falls through to NullEmbedder.
+    }
+  }
+
   const localFleetApi = localFleetBaseUrl?.replace(/\/v1\/?$/, "");
   const embedder: Embedder = localFleetApi
     ? new OllamaEmbedder({
         baseUrl: localFleetApi,
-        model: config.memory.embedding_model || "nomic-embed-text",
+        model: embeddingModel,
       })
     : new NullEmbedder();
 
@@ -224,6 +254,9 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
   // Wire the router into media tools so media.vision_search can dispatch
   // through to the C++ media-memory MCP server.
   setMediaToolRouter(toolRouter);
+  // Wire the MCP registry directly so vision_search can call MCP tools
+  // without going through the ToolRouter (which only holds builtin tools).
+  setMediaMcpRegistry(mcpRegistry);
 
   // Cron (declared early so the runTask closure can reference it and the
   // comms setters below can refer to the transport array by closure)
@@ -579,7 +612,9 @@ export function startGateway(ctx: RuntimeContext) {
   // the configured model so it's resident in VRAM before the first real
   // user message arrives. Avoids the 20s cold-start awkwardness on demo
   // recordings. Non-blocking; worst case the first message is slow anyway.
-  warmModelInBackground(ctx).catch(() => {});
+  // After warmup, recalibrate the GPU broker baseline so the warmed model
+  // isn't treated as an external VRAM claim.
+  warmModelInBackground(ctx).then(() => ctx.gpuBroker.recalibrateBaseline()).catch(() => {});
 
   return app;
 }

@@ -100,6 +100,59 @@ def export_onnx_model(
         sys.exit(1)
     
     model.eval()
+
+    # PyTorch 2.7's ONNX exporter can't handle the fused
+    # `aten::_native_multi_head_attention` op that nn.MultiheadAttention
+    # uses by default. Disable BOTH the module-level fastpath flag AND
+    # the global `need_weights=True` shortcut by monkey-patching forward
+    # to always go through the unfused path. This adds ~5s to export
+    # but is required for any post-2.6 PyTorch / opset combo.
+    try:
+        # Module-level: disable transformer encoder fastpath so the
+        # visual encoder doesn't dispatch to _native_multi_head_attention.
+        for m in model.modules():
+            if isinstance(m, torch.nn.MultiheadAttention):
+                m._is_fastpath_enabled = False  # type: ignore[attr-defined]
+            # Some open_clip versions wrap a TransformerEncoder; clear
+            # its fastpath too.
+            if isinstance(m, torch.nn.TransformerEncoder):
+                m.enable_nested_tensor = False
+            if isinstance(m, torch.nn.TransformerEncoderLayer):
+                m._is_fastpath_enabled = False  # type: ignore[attr-defined]
+
+        # Global: monkey-patch nn.MultiheadAttention.forward to use the
+        # functional path with need_weights=True (which guarantees the
+        # exporter sees the decomposed graph).
+        _orig_mha_forward = torch.nn.MultiheadAttention.forward
+        def _unfused_mha_forward(self, query, key, value, key_padding_mask=None,
+                                 need_weights=True, attn_mask=None,
+                                 average_attn_weights=True, is_causal=False):
+            return _orig_mha_forward(
+                self, query, key, value,
+                key_padding_mask=key_padding_mask,
+                need_weights=True,  # force decomposed path
+                attn_mask=attn_mask,
+                average_attn_weights=average_attn_weights,
+                is_causal=False,    # avoid causal-fastpath
+            )
+        torch.nn.MultiheadAttention.forward = _unfused_mha_forward
+    except Exception as _e:
+        print(f"WARN: MHA fastpath patch failed: {_e}")
+
+    # Belt-and-suspenders: force PyTorch's SDPA backend selection to
+    # `math` so any open_clip path that hits scaled_dot_product_attention
+    # (rather than nn.MultiheadAttention) still produces an ONNX-exportable
+    # decomposition. The flash and mem-efficient backends both lower to
+    # the same fused C++ op the exporter chokes on.
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+        _sdpa_ctx = sdpa_kernel(SDPBackend.MATH)
+        _sdpa_ctx.__enter__()
+        print("SDPA forced to math backend for export.")
+    except Exception as _e:
+        print(f"WARN: could not pin SDPA backend: {_e}")
+        _sdpa_ctx = None
+
     print("Model loaded successfully.\n")
     
     # Export visual encoder
@@ -121,6 +174,12 @@ def export_onnx_model(
             },
             opset_version=opset_version,
             do_constant_folding=True,
+            # PyTorch 2.7+ — the dynamo exporter handles fused ops the
+            # torchscript exporter rejects (`_native_multi_head_attention`
+            # being the canonical example for CLIP). `fallback=True`
+            # keeps the legacy path as a safety net for op-set quirks.
+            dynamo=True,
+            fallback=True,
         )
     
     print(f"✓ Visual encoder exported to {visual_output}")
@@ -147,6 +206,9 @@ def export_onnx_model(
             },
             opset_version=opset_version,
             do_constant_folding=True,
+            # See visual export above for why dynamo=True is required.
+            dynamo=True,
+            fallback=True,
         )
     
     print(f"✓ Text encoder exported to {text_output}")

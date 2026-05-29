@@ -111,6 +111,19 @@ export class McpRegistry {
     return out;
   }
 
+  /**
+   * Call a tool on a specific MCP server by server name + tool name.
+   * Used by media.vision_search to bypass the ToolRouter (which only
+   * holds builtin tools) and call MCP tools directly.
+   */
+  async callTool(serverName: string, toolName: string, args: unknown): Promise<unknown> {
+    const client = this.clients.get(serverName);
+    if (!client) throw new Error(`MCP server not found: ${serverName}`);
+    const handle = this.handles.get(serverName);
+    if (!handle || handle.health !== 'connected') throw new Error(`MCP server not connected: ${serverName}`);
+    return client.call(toolName, args);
+  }
+
   async shutdownAll(): Promise<void> {
     for (const client of this.clients.values()) {
       await client.shutdown();

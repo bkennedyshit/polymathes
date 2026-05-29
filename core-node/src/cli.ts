@@ -459,6 +459,43 @@ mediaCmd
     runMigrations(db);
     const ep = new MediaEpisodic(db);
 
+    // Wire text embedding into semantic memory so notes/blogs become
+    // RAG-able. Best-effort: needs a local Ollama embedder. If none is
+    // reachable we skip embedding (the files are still cataloged).
+    let textEmbedder: { embed: (t: string) => Promise<Float32Array | null> } | null = null;
+    let semantic: any = null;
+    if (!opts.dryRun) {
+      try {
+        const { loadConfig } = await import("./config/load.js");
+        const cfg = loadConfig();
+        const { OllamaEmbedder } = await import("./memory/embed.js");
+        const { SemanticMemory } = await import("./memory/semantic.js");
+        const fleet = (cfg.memory.embedder_base_url && cfg.memory.embedder_base_url.trim())
+          ? cfg.memory.embedder_base_url
+          : "http://localhost:11434/v1";
+        const api = fleet.replace(/\/v1\/?$/, "");
+        // Probe Ollama; only enable embedding if it's actually up.
+        const probe = await fetch(api + "/api/tags", { signal: AbortSignal.timeout(800) }).then((r) => r.ok).catch(() => false);
+        if (probe) {
+          textEmbedder = new OllamaEmbedder({ baseUrl: api, model: cfg.memory.embedding_model || "nomic-embed-text" });
+          semantic = new SemanticMemory(db);
+        }
+      } catch { /* embedding optional */ }
+    }
+
+    // Split a text doc into ~200-word chunks for embedding.
+    const chunkText = (content: string, srcPath: string): string[] => {
+      const words = content.split(/\s+/).filter(Boolean);
+      const out: string[] = [];
+      const SIZE = 200, OVERLAP = 20;
+      for (let i = 0; i < words.length; i += SIZE - OVERLAP) {
+        const slice = words.slice(i, i + SIZE).join(" ");
+        if (slice.trim()) out.push(`[${srcPath.split(/[\\/]/).pop()}] ${slice}`.slice(0, 4000));
+      }
+      return out.length ? out : [];
+    };
+
+    let textChunksEmbedded = 0;
     let lastReportedAt = Date.now();
     const result = await seedMedia(path, ep, {
       since: opts.since,
@@ -466,6 +503,14 @@ mediaCmd
       maxVideoMinutes: opts.maxVideoMinutes,
       forceLarge: opts.forceLarge,
       dryRun: opts.dryRun,
+      onText: textEmbedder && semantic ? async ({ path: p, content }) => {
+        for (const chunk of chunkText(content, p)) {
+          try {
+            const vec = await textEmbedder!.embed(chunk);
+            if (vec) { semantic.store(chunk, vec, `seed:${p}`); textChunksEmbedded++; }
+          } catch { /* skip bad chunk */ }
+        }
+      } : undefined,
       onProgress: (ev) => {
         if (ev.type === "register" && Date.now() - lastReportedAt > 1000) {
           process.stdout.write(`  registered: ${ev.path}\n`);
@@ -480,6 +525,9 @@ mediaCmd
     console.log(`  total scanned: ${result.total_files}`);
     console.log(`  registered:    ${result.registered}`);
     console.log(`  skipped:       ${result.skipped}`);
+    if (textChunksEmbedded > 0) {
+      console.log(`  text embedded: ${textChunksEmbedded} chunks → semantic memory`);
+    }
     console.log(`  duration:      ${(result.duration_ms / 1000).toFixed(1)}s`);
     console.log("");
     console.log("by brand:");

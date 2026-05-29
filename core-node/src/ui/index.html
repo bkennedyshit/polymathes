@@ -171,8 +171,18 @@ function StatusBar({ doctor }) {
 function ModelPicker({ current, onChange }) {
   const [open, setOpen] = React.useState(false);
   const [data, setData] = React.useState(null);
+  const ref = React.useRef(null);
   React.useEffect(() => { if (open) api('/api/models').then(setData).catch(() => setData({ models: [] })); }, [open]);
-  return e('div', { className: 'relative' },
+  // Close on outside click + Escape so clicking to the side dismisses it.
+  React.useEffect(() => {
+    if (!open) return;
+    const onDocClick = (ev) => { if (ref.current && !ref.current.contains(ev.target)) setOpen(false); };
+    const onKey = (ev) => { if (ev.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDocClick); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return e('div', { className: 'relative', ref },
     e('button', {
       className: 'flex items-center gap-2 px-3 py-1.5 rounded-md bg-bg-700 hover:bg-bg-600 text-sm mono border border-bg-600',
       onClick: () => setOpen(!open),

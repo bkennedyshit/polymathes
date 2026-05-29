@@ -13,6 +13,7 @@ let embedder: Embedder | undefined;
 let mediaEpisodic: MediaEpisodic | undefined;
 let mediaWorkflow: MediaWorkflow | undefined;
 let globalRouter: { invoke: (name: string, args: any, ctx?: any) => Promise<any> } | undefined;
+let globalMcpRegistry: { resolveTool: (name: string) => any; callTool: (serverName: string, toolName: string, args: any) => Promise<any> } | undefined;
 
 export function setMemoryBackend(
   e: EpisodicMemory,
@@ -36,6 +37,17 @@ export function setMediaToolRouter(
   router: { invoke: (name: string, args: any, ctx?: any) => Promise<any> },
 ): void {
   globalRouter = router;
+}
+
+/**
+ * Wire the MCP registry so media.vision_search can call MCP tools
+ * directly. The ToolRouter only knows about builtin tools; MCP tools
+ * live in a separate registry.
+ */
+export function setMediaMcpRegistry(
+  registry: { resolveTool: (name: string) => any; callTool: (serverName: string, toolName: string, args: any) => Promise<any> },
+): void {
+  globalMcpRegistry = registry;
 }
 
 export function register(registry: ToolRegistry): void {
@@ -384,7 +396,10 @@ export function register(registry: ToolRegistry): void {
       "Search media files by VISUAL similarity using GPU CLIP embeddings. Use this for queries like " +
       "'find a clean rider shot for the blog' or 'photos visually similar to this hero image'. Joins " +
       "vector hits with metadata so brand/category/duration filters still work after similarity ranking. " +
-      "Requires the media-memory MCP server to be running and an index to have been built.",
+      "Requires the media-memory MCP server to be running and an index to have been built. " +
+      "IMPORTANT: CLIP text-to-video scores are typically 0.15-0.25 — this is NORMAL and does NOT mean " +
+      "no match. Always return the top results to the user even when scores are below 0.25. " +
+      "Never say 'no results found' if the tool returns results with any score above 0.1.",
     parameters: z.object({
       query: z.string().describe("Natural-language description OR an absolute image/frame path. The C++ encoder handles both."),
       k: z.number().optional().describe("Top-K nearest neighbors to return. Default 8."),
@@ -395,19 +410,29 @@ export function register(registry: ToolRegistry): void {
     }),
     async handler(args, ctx) {
       const a = args as any;
-      // Route through the parent ToolRouter so we hit the media-memory MCP
-      // server's `search` tool. The router dispatches MCP-namespaced names.
-      const router = (ctx as any)?.router ?? globalRouter;
-      if (!router?.invoke) {
-        return { ok: false, error: "tool router not wired into media.vision_search" };
-      }
       let raw: any;
       try {
-        raw = await router.invoke(
-          "media-memory.search",
-          { query: a.query, k: a.k ?? 8 },
-          { sessionId: (ctx as any)?.sessionId ?? "media.vision_search" },
-        );
+        // Try MCP registry first (direct path, no ToolRouter indirection).
+        // The ToolRouter only holds builtin tools; MCP tools live in a
+        // separate McpRegistry. media-memory.media_search is the correct
+        // namespaced name: server=media-memory, tool=media_search.
+        if (globalMcpRegistry) {
+          raw = await globalMcpRegistry.callTool("media-memory", "media_search", {
+            query: a.query,
+            top_k: a.k ?? 8,
+          });
+        } else {
+          // Fallback: try the tool router (works if someone wired MCP into it).
+          const router = (ctx as any)?.router ?? globalRouter;
+          if (!router?.invoke) {
+            return { ok: false, error: "tool router not wired into media.vision_search" };
+          }
+          raw = await router.invoke(
+            "media-memory.media_search",
+            { query: a.query, top_k: a.k ?? 8 },
+            { sessionId: (ctx as any)?.sessionId ?? "media.vision_search" },
+          );
+        }
       } catch (e: any) {
         return {
           ok: false,
@@ -415,19 +440,41 @@ export function register(registry: ToolRegistry): void {
         };
       }
       // Normalize result shape — MCP servers return varied envelopes.
+      // The MCP SDK wraps results as {content: [{type:"text", text:"..."}]}.
+      // Unwrap the text content first, then parse the JSON array.
+      let unwrapped: any = raw;
+      if (raw?.content && Array.isArray(raw.content)) {
+        const textPart = raw.content.find((c: any) => c.type === "text");
+        if (textPart?.text) {
+          try { unwrapped = JSON.parse(textPart.text); } catch { unwrapped = raw; }
+        }
+      }
       const hits: Array<{ path: string; score: number }> =
-        raw?.results ?? raw?.hits ?? (Array.isArray(raw) ? raw : []);
+        unwrapped?.results ?? unwrapped?.hits ?? (Array.isArray(unwrapped) ? unwrapped : []);
 
       // Join with the catalog so we can post-filter on brand/category/etc.
+      // Path lookup is best-effort — if the catalog doesn't have the item
+      // we still return the result (with no metadata), so vision search
+      // always surfaces hits rather than silently dropping them.
       const enriched: Array<any> = [];
       for (const hit of hits) {
-        const path = hit.path ?? (hit as any).file ?? "";
-        if (!path) continue;
-        const item = mediaEpisodic?.get(path);
-        if (a.brand && item?.brand !== a.brand) continue;
-        if (a.category && item?.category !== a.category) continue;
-        if (a.min_duration_sec != null && (!item?.duration_sec || item.duration_sec < a.min_duration_sec)) continue;
-        if (a.max_duration_sec != null && (item?.duration_sec ?? Infinity) > a.max_duration_sec) continue;
+        const rawPath = hit.path ?? (hit as any).file ?? "";
+        if (!rawPath) continue;
+        // Try multiple path normalizations — omni-search may use backslashes
+        // while the catalog stores forward slashes or vice versa.
+        const item = mediaEpisodic?.get(rawPath)
+          ?? mediaEpisodic?.get(rawPath.replace(/\\/g, "/"))
+          ?? mediaEpisodic?.get(rawPath.replace(/\//g, "\\"));
+        const path = rawPath;
+        // Only apply brand/category filters when the catalog item was found.
+        // If item is null, pass through — the hit is still valid.
+        if (item) {
+          if (a.brand && item.brand !== a.brand) continue;
+          if (a.category && item.category !== a.category) continue;
+          // Only apply duration filters when the value is > 0 (0 means "no filter").
+          if (a.min_duration_sec && (!item.duration_sec || item.duration_sec < a.min_duration_sec)) continue;
+          if (a.max_duration_sec && (item.duration_sec ?? Infinity) > a.max_duration_sec) continue;
+        }
         enriched.push({
           path,
           score: hit.score ?? (hit as any).similarity ?? null,

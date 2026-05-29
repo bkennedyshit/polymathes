@@ -45,19 +45,20 @@ afterEach(() => {
 });
 
 describe("seedMedia", () => {
-  it("classifies videos, images, audio by extension", async () => {
+  it("classifies videos, images, audio, text by extension", async () => {
     touch(join(workDir, "input", "alpha", "raw", "v1.mp4"));
     touch(join(workDir, "input", "alpha", "raw", "img1.png"));
     touch(join(workDir, "input", "alpha", "raw", "voice.wav"));
-    touch(join(workDir, "input", "alpha", "raw", "notes.txt")); // skipped — not media
+    touch(join(workDir, "input", "alpha", "raw", "notes.txt")); // now indexed as text (RAG-able)
+    touch(join(workDir, "input", "alpha", "raw", "data.bin")); // skipped — unsupported
 
     const result = await seedMedia(workDir, ep);
-    expect(result.registered).toBe(3); // 3 media files; .txt is skipped
-    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.registered).toBe(4); // video + image + audio + text
+    expect(result.skipped).toBeGreaterThanOrEqual(1); // .bin skipped
 
     const all = ep.query();
     const kinds = all.map((m) => m.kind).sort();
-    expect(kinds).toEqual(["audio", "image", "video"]);
+    expect(kinds).toEqual(["audio", "image", "text", "video"]);
   });
 
   it("infers brand and category from path", async () => {

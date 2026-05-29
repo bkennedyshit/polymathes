@@ -79,7 +79,11 @@ models/
 **/omni_index.db-*
 **/audit.jsonl
 **/episodes/
-**/workspace/
+# NOTE: scope workspace ignores to runtime/content dirs only — do NOT
+# use a bare **/workspace/ which also nukes core-node/src/workspace/
+# (the seeder + init source code). That bug left source uncommitted.
+/workspace/
+AGENT/
 **/inbox/
 **/memory-embeddings.db*
 **/memory.db*
@@ -154,3 +158,22 @@ session.session-journal
 # ============================================================================
 !capabilities/media-memory/scripts/build_engines.sh
 !capabilities/media-memory/scripts/build_engines.ps1
+]633;E;echo "";ce99e350-e697-4be7-b147-c4b5ca96fd0a]633;C
+# ============================================================
+# Personal planning / setup notes (per-clone leak guard)
+# Block any planning markdown a contributor might drop in by
+# accident. The committed .gitignore catches generic patterns;
+# specific filenames go in .git/info/exclude (per-clone).
+# ============================================================
+*-PLAN.md
+*-INVENTORY.md
+*-SETUP.md
+*-FIX.md
+**/CONTEXT-PACKAGE.md
+**/Obsidian Vault/
+**/PC App Documemtation/
+!capabilities/*/SETUP.md
+!core-node/docs/*-SETUP.md
+
+# Editor workspace files
+*.code-workspace
