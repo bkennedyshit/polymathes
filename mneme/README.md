@@ -4,10 +4,9 @@
 
 **Local visual memory for any AI agent.**
 
-Give your agent eyes into your own photo & video library — semantic search by
-natural language or by-image similarity, 100% local, no cloud, no API spend.
-
-Speaks [MCP](https://modelcontextprotocol.io). Drops into **OpenClaw**, **Hermes**, **Claude Desktop**, **Cursor**, or anything else that speaks the protocol.
+Lets your AI assistant search your own photos & videos in plain English
+("rider mid-air at sunset") or by example image. Runs 100% on your machine.
+Plugs into OpenClaw, Hermes, Claude Desktop, Cursor — and your own polymathes agent.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
@@ -15,61 +14,83 @@ Speaks [MCP](https://modelcontextprotocol.io). Drops into **OpenClaw**, **Hermes
 
 </div>
 
+> **New to this and not sure what's going on?** Read [`START_HERE.md`](START_HERE.md)
+> first — it explains every term in plain English. This file is just: *how to run it.*
+
 ---
 
-## Why this exists
+## ⚡ Run it on your machine in 5 minutes
 
-Every agent framework is racing to remember your *conversations*. None of them
-can answer a content creator's actual question:
-
-> *"Find me a clean rider shot for a blog header — from the bmx brand, photo
-> only, shot vertical, 2024 or later."*
-
-Your memory isn't your chat history. It's the 80 raw clips waiting to be edited,
-the 200 finished reels, the 500 archive photos on a second drive. **Mneme makes
-that library a first-class memory your agent can search** — and because it
-speaks MCP, it plugs into the agent you already use instead of asking you to
-switch.
-
-Mneme is the portable front door to the [polymathes](https://github.com/bkennedyshit/polymathes)
-`media-memory` engine: a pure-Python CLIP server you can install in one line,
-that can *also* delegate to the fast CUDA + TensorRT C++ binary when you have it.
-
-## Install
+You need **one** thing installed first: `uv` (a fast Python tool that also installs
+Python for you so you don't have to). Get it:
 
 ```bash
-# Zero-config: run straight from the repo with uv
-uvx --from 'mneme-mcp[clip]' mneme-mcp
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# or install it
-pip install 'mneme-mcp[clip]'      # real CLIP search (downloads a small model)
-pip install mneme-mcp              # runs immediately on a non-semantic fallback
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-> Without the `[clip]` extra, Mneme still boots and every tool works — it just
-> uses a deterministic, **non-semantic** fallback embedder so you can verify the
-> wiring. Install `[clip]` for real visual search; add `[video]` to make
-> reels/clips searchable frame-by-frame.
-
-## Quick start
+Then:
 
 ```bash
-# Catalog a folder (uses the path as metadata — see "Creator-aware" below)
-mneme index ~/MyContent
+# 1. Get the code
+git clone https://github.com/bkennedyshit/polymathes.git
+cd polymathes/mneme
 
-# Search it from the terminal
-mneme search "rider mid-air against a sunset" --top-k 5
+# 2. Create an isolated environment and install Mneme into it
+uv venv
+#    activate it:
+source .venv/bin/activate          # macOS / Linux
+#    .venv\Scripts\Activate.ps1     # Windows PowerShell  (use this line instead on Windows)
 
-# Check status
-mneme info
+uv pip install -e .                # quick install (see note below about real search)
 ```
 
-## Plug it into your agent
+That's it. Now prove it works (this needs no GPU and no big downloads):
 
-Mneme is launched by the host over stdio as `mneme-mcp`.
+```bash
+# Does the whole thing actually run as an MCP server? This drives it end-to-end:
+python scripts/smoke_mcp.py
+# -> should print:  SMOKE OK ✓  (MCP handshake, index, search, describe all working)
+
+# Try the catalog yourself on a folder of files:
+mneme index ~/Pictures            # or any folder:  mneme index "C:\Users\you\Pictures"
+mneme info                        # shows how many files it catalogued
+mneme search "sunset" --min-score 0.0
+```
+
+> **Two install levels:**
+> - `uv pip install -e .` → runs instantly, but uses a **non-semantic fallback**
+>   (good for "does it run?", not for real search results).
+> - `uv pip install -e ".[clip]"` → **real** visual search. First run downloads
+>   PyTorch + a small CLIP model (a couple GB, one time). Use this when you want
+>   it to actually understand your images.
+> - add `,video` (i.e. `".[clip,video]"`) to also search inside videos frame-by-frame.
+
+### Run the 60-second demo (macOS / Linux)
+
+```bash
+bash scripts/demo.sh
+```
+
+It seeds a fake creator folder, indexes it, and runs a search — so you can see
+the whole flow without touching your real files. (On Windows, run the three
+`mneme` commands above instead, or use Git Bash / WSL.)
+
+---
+
+## 🔌 Plug it into your AI assistant
+
+Your assistant launches Mneme for you over a standard connection (MCP). You just
+add a few lines to that assistant's config.
 
 <details open>
-<summary><b>Claude Desktop / Cursor</b> (<code>mcp.json</code> / config)</summary>
+<summary><b>Claude Desktop</b> — edit its config file</summary>
+
+macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -82,44 +103,52 @@ Mneme is launched by the host over stdio as `mneme-mcp`.
   }
 }
 ```
+(See [`examples/claude_desktop.json`](examples/claude_desktop.json).)
+
+> Note: `uvx --from mneme-mcp[clip] ...` only works once Mneme is **published to
+> PyPI**. Until then, point `command` at your local install — ask and I'll wire
+> the exact local path for you.
 </details>
 
 <details>
-<summary><b>Hermes</b> (NousResearch/hermes-agent — native MCP client)</summary>
+<summary><b>Cursor</b></summary>
+
+`~/.cursor/mcp.json` — same block as above. See [`examples/cursor_mcp.json`](examples/cursor_mcp.json).
+</details>
+
+<details>
+<summary><b>Hermes</b> (NousResearch)</summary>
 
 ```bash
 hermes mcp add mneme -- uvx --from 'mneme-mcp[clip]' mneme-mcp
-# tools appear as media_index / media_search / media_search_by_image / media_describe
 ```
-See `examples/hermes.md`.
+Full walkthrough: [`examples/hermes.md`](examples/hermes.md).
 </details>
 
 <details>
-<summary><b>OpenClaw</b> (mcporter / skill bridge)</summary>
+<summary><b>OpenClaw</b></summary>
 
 ```bash
 mcporter add mneme -- uvx --from 'mneme-mcp[clip]' mneme-mcp
 ```
-See `examples/openclaw.md`.
+Full walkthrough: [`examples/openclaw.md`](examples/openclaw.md).
 </details>
 
-## Tools
-
-Identical surface to the polymathes native server, so the two are interchangeable:
+Once added, your assistant gains four tools:
 
 | Tool | What it does |
 |---|---|
-| `media_index(path, frame_interval, force, exclude)` | Walk a directory; embed images, video frames, docs, code |
-| `media_search(query, top_k, min_score, type_filter)` | Natural-language semantic search |
-| `media_search_by_image(image_path, top_k)` | Reverse-image / visual-similarity search |
-| `media_describe(id)` | Full record for an asset id |
+| `media_index` | catalogue a folder of photos/videos/docs |
+| `media_search` | find things by describing them |
+| `media_search_by_image` | find things that look like an example image |
+| `media_describe` | get full details for one result |
 
-Asset types: `image`, `video_segment`, `audio_segment`, `document`, `code`.
+---
 
-## Creator-aware: the path *is* metadata
+## 🎯 It understands your folders
 
-Mneme reads your folder layout the way the polymathes workspace convention
-defines it, so results carry workflow meaning automatically:
+Mneme reads your folder layout the way the polymathes workspace does, so results
+come back tagged automatically:
 
 ```
 <root>/content/<brand>/reels/clip.mp4   → brand=<brand>, intent=reel, warn_on_edit=true
@@ -128,44 +157,47 @@ defines it, so results carry workflow meaning automatically:
 ```
 
 That's why you can ask for *"the bmx brand, photo only, vertical"* and get it —
-the agent filters on `metadata.brand` / `metadata.intent` from the search hits.
+the tags ride along with every search result.
 
-## Two tiers, one tool surface
+---
 
-| | Portable (default) | Native (optional) |
+## 🧩 It's also the backend for polymathes itself
+
+Your polymathes agent ships the `media_*` tools as **stubs** that expect an
+external media-memory server (`core-node/src/tools/builtin/media.ts` returns
+*"media-memory MCP server not connected"*). Mneme fills that role — so one
+program powers both your own agent and any third-party assistant.
+
+---
+
+## ⚙️ Settings (all optional, set as environment variables)
+
+| Variable | Default | Meaning |
 |---|---|---|
-| Backend | open_clip (CPU/CUDA) | polymathes C++ + **TensorRT FP16** |
-| Install | `pip install mneme-mcp[clip]` | build the engine, set `MNEME_NATIVE_BIN` |
-| Best for | adoption, laptops, CI | large libraries, real-time, your GPU rig |
+| `MNEME_DB_PATH` | `~/.mneme/mneme.db` | where the catalogue is stored |
+| `MNEME_BACKEND` | `auto` | `auto` \| `openclip` (real) \| `hash` (fallback) \| `native` |
+| `MNEME_CLIP_MODEL` | `ViT-B-32` | which CLIP model to use |
+| `MNEME_NATIVE_BIN` | – | path to your C++/TensorRT engine for max speed |
+| `MNEME_TOP_K` / `MNEME_MIN_SCORE` | `10` / `0.25` | search result defaults |
 
-```bash
-export MNEME_NATIVE_BIN=/path/to/omni-search   # Mneme delegates the heavy lifting
-```
+---
 
-## Configuration (env)
+## 📚 The other docs (when you're ready)
 
-| Var | Default | Notes |
-|---|---|---|
-| `MNEME_DB_PATH` | `~/.mneme/mneme.db` | catalog location |
-| `MNEME_BACKEND` | `auto` | `auto` \| `openclip` \| `hash` \| `native` |
-| `MNEME_CLIP_MODEL` | `ViT-B-32` | open_clip model |
-| `MNEME_NATIVE_BIN` | – | path to the C++ engine |
-| `MNEME_TOP_K` / `MNEME_MIN_SCORE` | `10` / `0.25` | search defaults |
+- [`START_HERE.md`](START_HERE.md) — plain-English orientation + every term defined.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — the **AI video-editing** plan (your north star).
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — exact script for your demo video.
+- [`docs/UPSTREAM_PITCH.md`](docs/UPSTREAM_PITCH.md) — where to submit it + the get-hired plan.
 
-## Also the backend for polymathes itself
-
-polymathes' own agent ships the `media_*` tools as stubs that expect an external
-media-memory MCP server (`core-node/src/tools/builtin/media.ts`). Mneme is a
-drop-in for that role — so the same server powers both your polymathes agent and
-any third-party MCP host.
+---
 
 ## Status
 
-v0.1 — extracted from polymathes as a standalone, MCP-native component. Portable
-CLIP path + creator-aware metadata + native bridge are working. Audio
-transcription and a hosted skills listing are next.
+v0.1 — early but working: real CLIP search, creator-aware tags, native bridge,
+17 passing tests + a live MCP smoke test. Audio transcription and a PyPI release
+are next. Video **editing** (vs. search) is the next wedge — see the roadmap.
 
 ## License
 
-MIT. Built by [Bill Kennedy](https://github.com/bkennedyshit). Part of the
-[polymathes](https://github.com/bkennedyshit/polymathes) project.
+MIT. Built by [Bill Kennedy](https://github.com/bkennedyshit). Part of
+[polymathes](https://github.com/bkennedyshit/polymathes).
