@@ -14,6 +14,6 @@ export const defaults: AppConfig = {
   },
   mcp_servers: [],
   agents: [],
-  memory: { consolidation_model: 'gpt-4o-mini', embedding_model: 'text-embedding-3-small', recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } },
+  memory: { consolidation_model: 'gpt-4o-mini', embedding_model: 'nomic-embed-text', recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } },
   cron: { enabled: true },
 };

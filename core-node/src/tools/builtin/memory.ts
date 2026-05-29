@@ -88,7 +88,7 @@ export function register(registry: ToolRegistry): void {
       "remember across sessions. Does NOT replace existing notes — creates a new entry. Use memory.forget " +
       "to remove stale ones.",
     parameters: z.object({
-      content: z.string().describe("The fact in a single clear sentence. Example: 'User stores raw BMX footage under D:/AGENT/input/bmx/'."),
+      content: z.string().describe("The fact in a single clear sentence. Example: 'User stores raw footage under D:/Content/input/'."),
     }),
     async handler(args, ctx) {
       const { content } = args as { content: string };
@@ -154,7 +154,7 @@ export function register(registry: ToolRegistry): void {
     parameters: z.object({
       path: z.string().describe("Absolute file path."),
       kind: z.string().optional().describe("video | image | audio"),
-      brand: z.string().optional().describe("Brand tag (bmx, nepa-ai, etc). Usually auto-inferred from path."),
+      brand: z.string().optional().describe("Brand tag (e.g. your project or client name). Usually auto-inferred from path."),
       category: z.string().optional().describe("raw | edited | reel | photo | archive"),
       intent: z.string().optional(),
       duration_sec: z.number().optional(),
@@ -176,8 +176,8 @@ export function register(registry: ToolRegistry): void {
     name: "media.query",
     description:
       "Search the media catalog with structured filters. Use this to answer content questions like " +
-      "'show me BMX reels posted in May', 'find raw sessions longer than 10 minutes', 'what photos are " +
-      "in the nepa-ai brand folder'.",
+      "'show me reels posted in May', 'find raw sessions longer than 10 minutes', 'what photos are " +
+      "in a given brand folder'.",
     parameters: z.object({
       brand: z.string().optional(),
       category: z.string().optional(),
@@ -187,7 +187,7 @@ export function register(registry: ToolRegistry): void {
       max_duration_sec: z.number().optional(),
       modified_after: z.string().optional().describe("ISO-8601 timestamp."),
       modified_before: z.string().optional(),
-      path_glob: z.string().optional().describe("Wildcard path match, e.g. D:/AGENT/input/bmx/* "),
+      path_glob: z.string().optional().describe("Wildcard path match, e.g. D:/Content/input/* "),
       limit: z.number().optional(),
     }),
     async handler(args) {
@@ -356,7 +356,7 @@ export function register(registry: ToolRegistry): void {
       "upsert into the catalog. Idempotent — safe to re-run. Use to bootstrap or refresh the catalog " +
       "after adding new content to disk.",
     parameters: z.object({
-      path: z.string().describe("Absolute root path to scan (e.g. D:/AGENT or D:/AGENT/input/bmx)."),
+      path: z.string().describe("Absolute root path to scan (e.g. D:/Content or D:/Content/input)."),
       since: z.string().optional().describe("ISO timestamp; only seed files modified after this."),
       max_file_mb: z.number().optional().describe("Skip files larger than N MB. Default 2048."),
       max_video_minutes: z.number().optional().describe("Warn on videos longer than N minutes. Default 10."),

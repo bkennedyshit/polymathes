@@ -3,35 +3,51 @@ name: Build
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags:
       - "v*"
+  pull_request:
+    branches: [main]
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            target: polymath-ts-linux-x64
-          - os: windows-latest
-            target: polymath-ts-windows-x64.exe
-          - os: macos-latest
-            target: polymath-ts-macos-arm64
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
-        working-directory: core-ts
+        working-directory: core-node
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
+
+      - uses: pnpm/action-setup@v4
         with:
-          deno-version: "2.x"
-      - run: deno task build
-      - uses: actions/upload-artifact@v4
+          version: 9
+
+      - uses: actions/setup-node@v4
         with:
-          name: ${{ matrix.target }}
-          path: core-ts/dist/*
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: core-node/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test --run
+
+      - name: Upload dist
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: polymath-dist
+          path: core-node/dist/**
 
   release:
     name: release
@@ -45,6 +61,6 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: dist/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

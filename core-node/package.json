@@ -19,7 +19,7 @@
     "prepack": "pnpm build",
     "test": "vitest",
     "lint": "tsc --noEmit",
-    "start": "node dist/polymath.mjs"
+    "start": "node dist/polymath.cjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.2",

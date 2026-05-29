@@ -31,6 +31,7 @@ import { MediaWorkflow } from "./memory/media_workflow.js";
 import { MemoryScheduler } from "./memory/scheduler.js";
 import { hybridRecall } from "./memory/hybrid_recall.js";
 import { createApp } from "./gateway/server.js";
+import { loadOrCreateToken } from "./gateway/auth.js";
 import { serve } from "@hono/node-server";
 import type { Transport } from "./transports/base.js";
 import type { AppConfig } from "./config/schema.js";
@@ -602,10 +603,16 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
 }
 
 export function startGateway(ctx: RuntimeContext) {
+  // Ensure an auth token exists BEFORE createApp wires the auth
+  // middleware (which captures the token at construction time). Without
+  // this a fresh clone has no ~/.polymath/auth.key and every /api/*
+  // request 500s with "no auth configured" — the UI is dead on arrival.
+  const token = loadOrCreateToken();
   const app = createApp(ctx as any, { skillRegistry: ctx.skillRegistry });
   const port = ctx.config.runtime.port;
   serve({ fetch: app.fetch, port }, () => {
     ctx.logger.info(`polymath gateway listening on http://localhost:${port}`);
+    ctx.logger.info(`auth token: ${token.slice(0, 8)}… (full token in ~/.polymath/auth.key — paste it into the web UI)`);
   });
 
   // Boot warmup — for local LLM providers, fire one no-op generate against

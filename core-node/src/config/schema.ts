@@ -98,7 +98,7 @@ const RecallWeightsSchema = z.object({
 
 const MemorySchema = z.object({
   consolidation_model: z.string().default('gpt-4o-mini'),
-  embedding_model: z.string().default('text-embedding-3-small'),
+  embedding_model: z.string().default('nomic-embed-text'),
   /**
    * Optional Ollama URL used for embeddings and GPU brokering when the
    * primary LLM provider is a cloud one (openai-codex, anthropic, etc).
@@ -123,7 +123,7 @@ export const AppConfigSchema = z.object({
   channels: ChannelsSchema.default({ telegram: { token: '', enabled: false }, discord: { token: '', enabled: false }, signal: { enabled: false }, email: { imap: '', smtp: '', enabled: false }, webchat: { enabled: true } }),
   mcp_servers: z.array(McpServerSchema).default([]),
   agents: z.array(AgentSchema).default([]),
-  memory: MemorySchema.default({ consolidation_model: 'gpt-4o-mini', embedding_model: 'text-embedding-3-small', recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } }),
+  memory: MemorySchema.default({ consolidation_model: 'gpt-4o-mini', embedding_model: 'nomic-embed-text', recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } }),
   cron: CronSchema.default({ enabled: true }),
 });
 

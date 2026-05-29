@@ -799,6 +799,21 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     if (!body?.tool) return c.json({ error: "tool required" }, 400);
     try {
       const sid = body.sessionId || `ui-${ulid()}`;
+      // MCP-namespaced tools (e.g. "media-memory.media_index") live in the
+      // McpRegistry, NOT the builtin ToolRouter. Detect the namespaced form
+      // and route it directly to the MCP server. Builtin tools (no dot, or
+      // a dot that doesn't match a connected MCP server) fall through to
+      // the ToolRouter.
+      const dot = body.tool.indexOf(".");
+      if (dot > 0 && (ctx as any).mcpRegistry?.resolveTool) {
+        const resolved = (ctx as any).mcpRegistry.resolveTool(body.tool);
+        if (resolved) {
+          const serverName = body.tool.slice(0, dot);
+          const toolName = body.tool.slice(dot + 1);
+          const result = await (ctx as any).mcpRegistry.callTool(serverName, toolName, body.args ?? {});
+          return c.json({ ok: true, result });
+        }
+      }
       const result = await ctx.toolRouter.invoke(body.tool, body.args ?? {}, { sessionId: sid });
       return c.json({ ok: true, result });
     } catch (e: any) {

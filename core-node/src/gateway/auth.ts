@@ -22,6 +22,18 @@ export function loadToken(): string | null {
   }
 }
 
+/**
+ * Load the gateway auth token, generating one on first run if it
+ * doesn't exist. This is what boot/startGateway should call so a fresh
+ * clone is immediately usable — without it the auth middleware returns
+ * 500 "no auth configured" for every /api/* request and the UI is dead.
+ */
+export function loadOrCreateToken(): string {
+  const existing = loadToken();
+  if (existing) return existing;
+  return generateToken();
+}
+
 export function authMiddleware() {
   const token = loadToken();
   return async (c: Context, next: Next) => {

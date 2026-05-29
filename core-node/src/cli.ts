@@ -630,13 +630,18 @@ mediaCmd
   .action(async (target: string, opts: { recursive?: boolean; forceLarge?: boolean }) => {
     const token = loadToken();
     if (!token) { console.error("gateway not running or no token"); process.exit(1); }
-    const args = { path: target, recursive: opts.recursive !== false, force_large: !!opts.forceLarge };
+    // The MCP server namespaces its tools as <server>.<tool>; the C++
+    // indexer tool is `media_index` (underscore), so the routed name is
+    // `media-memory.media_index`. The gateway bridges MCP calls through
+    // /api/actions/invoke.
+    const args: Record<string, unknown> = { path: target };
+    if (opts.forceLarge) args.force = true;
     process.stdout.write(`Indexing ${target} via media-memory MCP server… `);
     try {
       const r = await fetch("http://127.0.0.1:18789/api/actions/invoke", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: "Bearer " + token },
-        body: JSON.stringify({ tool: "media-memory.index", args }),
+        body: JSON.stringify({ tool: "media-memory.media_index", args }),
         signal: AbortSignal.timeout(60 * 60 * 1000), // 1h cap — vision indexing is slow
       });
       const body = await r.json();
