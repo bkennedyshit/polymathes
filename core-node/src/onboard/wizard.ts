@@ -79,7 +79,7 @@ export async function runOnboard(opts: OnboardOpts = {}): Promise<void> {
   // Write config
   const config = {
     runtime: { home_dir: homeDir, port: 18789, log_level: "info" },
-    llm: { provider, model: provider === "anthropic" ? "claude-sonnet-4-20250514" : "gpt-4o", api_key: apiKey, streaming: true, context_window: 128000, temperature: 0.7 },
+    llm: { provider, model: provider === "anthropic" ? "claude-sonnet-4-20250514" : provider === "local" || provider === "ollama" ? "llama3:8b" : "gpt-4o", api_key: apiKey, base_url: (provider === "local" || provider === "ollama") ? "http://localhost:11434/v1" : undefined, streaming: true, context_window: 128000, temperature: 0.7 },
     orchestrator: { max_iterations: 25, max_token_budget: 200000, max_subagent_depth: 3 },
     sandbox: { default_mode: "host", tool_overrides: {} },
     channels: {
@@ -91,7 +91,7 @@ export async function runOnboard(opts: OnboardOpts = {}): Promise<void> {
     },
     mcp_servers: [],
     agents: [],
-    memory: { consolidation_model: "gpt-4o-mini", embedding_model: "text-embedding-3-small", recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } },
+    memory: { consolidation_model: "gpt-4o-mini", embedding_model: "nomic-embed-text", recall_weights: { semantic: 0.5, episodic: 0.3, recency: 0.2 } },
     cron: { enabled: true },
   };
 

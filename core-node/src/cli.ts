@@ -62,6 +62,15 @@ program
   });
 
 program
+  .command("setup")
+  .description("Interactive first-run setup wizard — creates ~/.polymath/polymath.json")
+  .option("--daemon", "also install a systemd/Task Scheduler autostart entry")
+  .action(async (opts: { daemon?: boolean }) => {
+    const { runOnboard } = await import("./onboard/wizard.js");
+    await runOnboard({ installDaemon: opts.daemon });
+  });
+
+program
   .command("show-token")
   .description("Print the gateway auth token")
   .action(() => {

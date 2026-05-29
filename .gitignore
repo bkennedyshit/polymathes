@@ -156,8 +156,8 @@ session.session-journal
 # ============================================================================
 # Keep these binaries even though they match patterns above
 # ============================================================================
-!capabilities/media-memory/scripts/build_engines.sh
-!capabilities/media-memory/scripts/build_engines.ps1
+!capabilities/media-memory/tools/build_engines.sh
+!capabilities/media-memory/tools/build_engines.ps1
 ]633;E;echo "";ce99e350-e697-4be7-b147-c4b5ca96fd0a]633;C
 # ============================================================
 # Personal planning / setup notes (per-clone leak guard)
