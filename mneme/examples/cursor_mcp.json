@@ -1,0 +1,12 @@
+{
+  "//": "Cursor:  ~/.cursor/mcp.json  (global)  or  <project>/.cursor/mcp.json  (per-project)",
+  "mcpServers": {
+    "mneme": {
+      "command": "uvx",
+      "args": ["--from", "mneme-mcp[clip]", "mneme-mcp"],
+      "env": {
+        "MNEME_DB_PATH": "~/.mneme/mneme.db"
+      }
+    }
+  }
+}

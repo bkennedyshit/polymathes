@@ -1,0 +1,14 @@
+{
+  "//": "Claude Desktop:  ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)",
+  "//windows": "%APPDATA%\\Claude\\claude_desktop_config.json",
+  "mcpServers": {
+    "mneme": {
+      "command": "uvx",
+      "args": ["--from", "mneme-mcp[clip]", "mneme-mcp"],
+      "env": {
+        "MNEME_DB_PATH": "~/.mneme/mneme.db",
+        "MNEME_BACKEND": "auto"
+      }
+    }
+  }
+}
