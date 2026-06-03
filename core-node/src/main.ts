@@ -124,6 +124,23 @@ function createLlmAdapter(config: AppConfig): LlmAdapter {
   }
 }
 
+function resolveConsolidationModel(config: AppConfig): string | undefined {
+  const configured = config.memory.consolidation_model?.trim();
+  if (!configured) return config.llm.model;
+
+  if (config.llm.provider === "openai-codex" && !configured.startsWith("gpt-")) {
+    return config.llm.model;
+  }
+  if (config.llm.provider === "anthropic" && !configured.startsWith("claude-")) {
+    return config.llm.model;
+  }
+  if (config.llm.provider === "google" && !configured.startsWith("gemini-")) {
+    return config.llm.model;
+  }
+
+  return configured;
+}
+
 /**
  * Public factory wrapper for tests + future callers that want to
  * construct an adapter without booting the full runtime. Accepts a
@@ -485,7 +502,7 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
         const stream = llm.complete(
           messages.map((m) => ({ role: m.role as any, content: m.content })),
           [],
-          { stream: false, model: config.memory.consolidation_model },
+          { stream: true, model: resolveConsolidationModel(config) },
         );
         let out = "";
         for await (const delta of stream) {

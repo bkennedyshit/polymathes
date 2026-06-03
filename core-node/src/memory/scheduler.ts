@@ -99,7 +99,7 @@ export class MemoryScheduler {
           embedder: this.opts.embedder,
           db: this.opts.db,
         });
-        this.log("info", `consolidated ${sid}: ${result.status}${result.facts_stored ? ` (${result.facts_stored} facts)` : ""}`);
+        this.log("info", `consolidated ${sid}: ${result.status}${result.error ? ` - ${result.error}` : ""}${result.facts_stored ? ` (${result.facts_stored} facts)` : ""}`);
       } catch (e: any) {
         this.log("warn", `consolidation failed for ${sid}: ${e?.message ?? e}`);
       }
@@ -121,6 +121,7 @@ export class MemoryScheduler {
         this.log(
           "info",
           `mid-session compressed ${sid}: ${result.status}${
+            result.error ? ` - ${result.error}` :
             result.compressed_count ? ` (${result.compressed_count} turns rolled into ${result.facts_stored ?? 0} facts)` : ""
           }`,
         );
