@@ -7,7 +7,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   bundle: true,
-  external: ['better-sqlite3', '@modelcontextprotocol/sdk', 'playwright-core', 'chromium-bidi'],
+  external: ['better-sqlite3', 'playwright-core', 'chromium-bidi'],
   banner: {
     js: `#!/usr/bin/env node
 const { pathToFileURL: __ptfu } = require('node:url');
@@ -60,4 +60,3 @@ if (pattern.test(source)) {
 } else {
   console.log('build: isAbortSignal pattern not found — skipping patch');
 }
-

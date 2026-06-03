@@ -275,7 +275,7 @@ function ChatPanel() {
         const fd = new FormData();
         fd.append('file', file);
         if (sessionId) fd.append('sessionId', sessionId);
-        const r = await fetch('/api/attachments', { method: 'POST', headers: authHdr, body: fd });
+        const r = await fetch('/api/attachments', { method: 'POST', headers: authHeaders(), body: fd });
         const j = await r.json();
         if (r.ok) setAttachments(a => [...a, { name: file.name, path: j.path, size: j.size }]);
         else toast(j.error || 'upload failed', 'error');
@@ -297,7 +297,7 @@ function ChatPanel() {
 
     try {
       const res = await fetch('/api/chat/stream', {
-        method: 'POST', headers: jsonHdrs,
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ text, sessionId }),
       });
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);

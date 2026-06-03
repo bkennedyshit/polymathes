@@ -62,6 +62,23 @@ program
   });
 
 program
+  .command("serve")
+  .description("Start the local web gateway and keep it running")
+  .action(async () => {
+    const { boot, startGateway } = await import("./main.js");
+    const opts = program.opts();
+    let ctx;
+    try {
+      ctx = await boot({ config: opts.config, model: opts.model, verbose: opts.verbose, logLevel: opts.logLevel, maxIterations: opts.maxIterations });
+    } catch (e: any) {
+      console.error(`Config error: ${e.message}`);
+      process.exit(2);
+    }
+    startGateway(ctx);
+    await new Promise(() => {});
+  });
+
+program
   .command("setup")
   .description("Interactive first-run setup wizard — creates ~/.polymath/polymath.json")
   .option("--daemon", "also install a systemd/Task Scheduler autostart entry")

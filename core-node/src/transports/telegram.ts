@@ -71,7 +71,11 @@ export class TelegramTransport implements Transport {
   }
 
   async stop(): Promise<void> {
-    this.bot.stop();
+    try {
+      this.bot.stop();
+    } catch (e: any) {
+      if (!String(e?.message ?? e).includes("Bot is not running")) throw e;
+    }
   }
 
   async send(sessionId: string, text: string): Promise<void> {
