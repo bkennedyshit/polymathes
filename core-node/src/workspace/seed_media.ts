@@ -14,7 +14,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { openSync, readSync, closeSync, statSync, readdirSync, existsSync, readFileSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { inferFromPath, loadPathRules, type PathRulesConfig } from "../memory/path_inference.js";
 import type { MediaEpisodic, MediaItem } from "../memory/media_episodic.js";
@@ -73,6 +73,8 @@ const AUDIO_EXTS = new Set([
 const TEXT_EXTS = new Set([
   ".md", ".markdown", ".txt", ".rst",
 ]);
+const SIDECAR_EXTS = [".txt", ".md", ".markdown", ".srt", ".vtt"];
+const MAX_SIDECAR_CHARS = 32 * 1024;
 
 function classifyKind(absPath: string): "video" | "image" | "audio" | "text" | null {
   const ext = extname(absPath).toLowerCase();
@@ -181,6 +183,36 @@ function imageDimensions(absPath: string): { width?: number; height?: number } {
     }
   } catch { /* ignore */ }
   return {};
+}
+
+function readSidecarText(absPath: string): { sidecar_text?: string; sidecar_files?: string[] } {
+  const ext = extname(absPath);
+  const base = ext ? absPath.slice(0, -ext.length) : absPath;
+  const candidates = new Set<string>();
+  for (const sidecarExt of SIDECAR_EXTS) {
+    candidates.add(base + sidecarExt);
+    candidates.add(absPath + sidecarExt);
+  }
+  candidates.add(join(dirname(absPath), "captions", base.split(/[\\/]/).pop() + ".txt"));
+  candidates.add(join(dirname(absPath), "transcripts", base.split(/[\\/]/).pop() + ".txt"));
+
+  const chunks: string[] = [];
+  const files: string[] = [];
+  for (const candidate of candidates) {
+    if (candidate === absPath || !existsSync(candidate)) continue;
+    try {
+      const text = readFileSync(candidate, "utf-8").replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      files.push(candidate);
+      chunks.push(text);
+      if (chunks.join("\n").length >= MAX_SIDECAR_CHARS) break;
+    } catch { /* ignore unreadable sidecars */ }
+  }
+  if (!chunks.length) return {};
+  return {
+    sidecar_text: chunks.join("\n").slice(0, MAX_SIDECAR_CHARS),
+    sidecar_files: files,
+  };
 }
 
 function shouldSkipBySize(
@@ -322,6 +354,9 @@ export async function seedMedia(
 
     const sourceHash = quickHash(absPath, size);
     const modifiedAt = new Date(mtimeMs).toISOString();
+    const sidecar = kind === "video" || kind === "image" || kind === "audio"
+      ? readSidecarText(absPath)
+      : {};
 
     const item: Omit<MediaItem, "id" | "indexed_at"> = {
       path: absPath,
@@ -343,6 +378,7 @@ export async function seedMedia(
         ...(inferred.workflow_state ? { workflow_state: inferred.workflow_state } : {}),
         ...(inferred.warn_on_edit ? { warn_on_edit: "true" } : {}),
         ...(override ? { retagged: "true" } : {}),
+        ...sidecar,
       },
     };
 

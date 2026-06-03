@@ -20,6 +20,7 @@
  */
 import type Database from "better-sqlite3";
 import { ulid } from "ulid";
+import { buildFtsMatchQuery } from "./episodic.js";
 
 export interface MediaItem {
   id: string;
@@ -40,6 +41,8 @@ export interface MediaItem {
 }
 
 export interface MediaFilter {
+  /** Natural-language query matched against path, tags, metadata, notes, and inferred labels. */
+  query?: string;
   brand?: string;
   category?: string;
   kind?: string;
@@ -119,6 +122,8 @@ export class MediaEpisodic {
   }
 
   query(filter: MediaFilter = {}): MediaItem[] {
+    if (filter.query?.trim()) return this.search(filter.query, filter);
+
     const clauses: string[] = [];
     const params: any[] = [];
     if (filter.brand) { clauses.push("brand = ?"); params.push(filter.brand); }
@@ -135,6 +140,28 @@ export class MediaEpisodic {
     const limit = Math.min(filter.limit ?? 100, 500);
     const rows = this.db
       .prepare(`SELECT * FROM media_items ${where} ORDER BY modified_at DESC LIMIT ?`)
+      .all(...params, limit) as any[];
+    return rows.map(rowToItem);
+  }
+
+  search(query: string, filter: Omit<MediaFilter, "query"> = {}): MediaItem[] {
+    const matchQuery = buildFtsMatchQuery(query, 12);
+    if (!matchQuery) return this.query(filter);
+
+    const clauses: string[] = ["media_fts MATCH ?"];
+    const params: any[] = [matchQuery];
+    appendMediaFilterClauses(filter, clauses, params);
+
+    const limit = Math.min(filter.limit ?? 50, 500);
+    const rows = this.db
+      .prepare(`
+        SELECT mi.*
+        FROM media_items mi
+        JOIN media_fts f ON f.rowid = mi.rowid
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY bm25(media_fts), mi.modified_at DESC
+        LIMIT ?
+      `)
       .all(...params, limit) as any[];
     return rows.map(rowToItem);
   }
@@ -156,6 +183,18 @@ export class MediaEpisodic {
   remove(id: string): void {
     this.db.prepare(`DELETE FROM media_items WHERE id = ?`).run(id);
   }
+}
+
+function appendMediaFilterClauses(filter: Omit<MediaFilter, "query">, clauses: string[], params: any[]): void {
+  if (filter.brand) { clauses.push("mi.brand = ?"); params.push(filter.brand); }
+  if (filter.category) { clauses.push("mi.category = ?"); params.push(filter.category); }
+  if (filter.kind) { clauses.push("mi.kind = ?"); params.push(filter.kind); }
+  if (filter.intent) { clauses.push("mi.intent = ?"); params.push(filter.intent); }
+  if (filter.min_duration_sec != null) { clauses.push("mi.duration_sec >= ?"); params.push(filter.min_duration_sec); }
+  if (filter.max_duration_sec != null) { clauses.push("mi.duration_sec <= ?"); params.push(filter.max_duration_sec); }
+  if (filter.modified_after) { clauses.push("mi.modified_at >= ?"); params.push(filter.modified_after); }
+  if (filter.modified_before) { clauses.push("mi.modified_at <= ?"); params.push(filter.modified_before); }
+  if (filter.path_glob) { clauses.push("mi.path LIKE ? ESCAPE '\\'"); params.push(globToLike(filter.path_glob)); }
 }
 
 function rowToItem(row: any): MediaItem {

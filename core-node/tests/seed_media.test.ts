@@ -154,6 +154,30 @@ describe("seedMedia", () => {
     expect(result.by_category.reel).toBe(1);
   });
 
+  it("searches media by natural-language text across path and metadata", async () => {
+    touch(join(workDir, "content", "alpha", "reels", "pump-track-finished-video.mp4"));
+    touch(join(workDir, "content", "alpha", "raw", "warehouse-session.mp4"));
+
+    await seedMedia(workDir, ep);
+
+    const results = ep.query({ query: "finished pump track", kind: "video" });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.path).toContain("pump-track-finished-video.mp4");
+  });
+
+  it("indexes sidecar captions and transcripts into media text search", async () => {
+    const video = join(workDir, "content", "alpha", "reels", "clip01.mp4");
+    touch(video);
+    touch(video + ".txt", "night session tailwhip over the box jump");
+
+    await seedMedia(workDir, ep);
+
+    const results = ep.query({ query: "tailwhip box jump", kind: "video" });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.path).toBe(video);
+    expect(results[0]?.metadata?.sidecar_text).toContain("tailwhip");
+  });
+
   it("returns empty result for non-existent path", async () => {
     const result = await seedMedia(join(workDir, "does-not-exist"), ep);
     expect(result.registered).toBe(0);

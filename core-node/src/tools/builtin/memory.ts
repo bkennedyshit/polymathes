@@ -175,10 +175,11 @@ export function register(registry: ToolRegistry): void {
   registry.register({
     name: "media.query",
     description:
-      "Search the media catalog with structured filters. Use this to answer content questions like " +
-      "'show me reels posted in May', 'find raw sessions longer than 10 minutes', 'what photos are " +
-      "in a given brand folder'.",
+      "Search the media catalog with structured filters and optional text RAG over paths, tags, metadata, notes, " +
+      "captions, and transcripts. Use this to answer content questions like 'find the finished video about X', " +
+      "'show me reels posted in May', 'find raw sessions longer than 10 minutes', or 'what photos are in a brand folder'.",
     parameters: z.object({
+      query: z.string().optional().describe("Natural-language text search over media path/metadata/notes/transcripts."),
       brand: z.string().optional(),
       category: z.string().optional(),
       kind: z.string().optional(),
