@@ -204,6 +204,16 @@ polymath mcp serve             # expose Polymath's tools as MCP server
 
 ---
 
+## Use with OpenClaw
+
+If you already use OpenClaw and only want Polymath's local photo/video memory layer, use the separate integration package:
+
+**[openclaw-polymath](https://github.com/bkennedyshit/openclaw-polymath)** — an OpenClaw-facing skill and install guide for `mneme-mcp` visual memory.
+
+That package is intentionally smaller than this runtime. It gives OpenClaw users local media indexing/search without forcing them to adopt the whole Polymath gateway, UI, GPU broker, channels, and private skill system.
+
+---
+
 ## Honest comparisons
 
 | | Polymath | Hermes Agent | OpenClaw | ChatRTX |
