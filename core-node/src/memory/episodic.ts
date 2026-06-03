@@ -34,6 +34,8 @@ export class EpisodicMemory {
   }
 
   recall(query: string, limit = 10): EpisodicEntry[] {
+    const matchQuery = buildFtsMatchQuery(query);
+    if (!matchQuery) return [];
     return this.db
       .prepare(
         `SELECT e.* FROM episodic e
@@ -43,13 +45,23 @@ export class EpisodicMemory {
          ORDER BY rank
          LIMIT ?`
       )
-      .all(query, limit) as EpisodicEntry[];
+      .all(matchQuery, limit) as EpisodicEntry[];
   }
 
   recallBySession(sessionId: string, limit = 50, opts: { includeCompressed?: boolean } = {}): EpisodicEntry[] {
     const compressedFilter = opts.includeCompressed ? "" : "AND compressed_at IS NULL";
+    // Return the latest N messages, then restore chronological order for
+    // display/model context. Returning the oldest N made long sessions forget
+    // the user's most recent steps.
     return this.db
-      .prepare(`SELECT * FROM episodic WHERE session_id = ? ${compressedFilter} ORDER BY created_at LIMIT ?`)
+      .prepare(
+        `SELECT * FROM (
+           SELECT episodic.*, rowid AS memory_rowid FROM episodic
+           WHERE session_id = ? ${compressedFilter}
+           ORDER BY created_at DESC, rowid DESC
+           LIMIT ?
+         ) ORDER BY created_at ASC, memory_rowid ASC`
+      )
       .all(sessionId, limit) as EpisodicEntry[];
   }
 
@@ -74,4 +86,15 @@ export class EpisodicMemory {
       .run(...ids);
     return result.changes;
   }
+}
+
+export function buildFtsMatchQuery(query: string, maxTerms = 8): string {
+  const terms = Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .match(/[\p{L}\p{N}_-]{2,}/gu) ?? [],
+    ),
+  ).slice(0, maxTerms);
+  return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ");
 }

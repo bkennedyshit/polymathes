@@ -2,10 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { runMigrations } from "../src/db/migrate.js";
 import { WorkingMemory } from "../src/memory/working.js";
-import { EpisodicMemory } from "../src/memory/episodic.js";
+import { buildFtsMatchQuery, EpisodicMemory } from "../src/memory/episodic.js";
 import { SemanticMemory } from "../src/memory/semantic.js";
 import { hybridRecall } from "../src/memory/hybrid_recall.js";
 import { consolidateSession } from "../src/memory/consolidator.js";
+import { formatRecentSessionContext } from "../src/memory/session_context.js";
+import { loadRootMemory } from "../src/memory/root_memory.js";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
@@ -73,12 +78,71 @@ describe("EpisodicMemory", () => {
     expect(results[0]!.content).toBe("hello world");
   });
 
+  it("recallBySession returns the latest limited messages in chronological order", () => {
+    em.store("sess1", "user", "old");
+    em.store("sess1", "assistant", "middle");
+    em.store("sess1", "user", "new");
+    const results = em.recallBySession("sess1", 2);
+    expect(results.map((r) => r.content)).toEqual(["middle", "new"]);
+  });
+
   it("FTS recall", () => {
     em.store("sess1", "user", "the quick brown fox");
     em.store("sess1", "user", "lazy dog sleeps");
     const results = em.recall("fox");
     expect(results).toHaveLength(1);
     expect(results[0]!.content).toContain("fox");
+  });
+
+  it("FTS recall escapes punctuation-heavy user text", () => {
+    em.store("sess1", "user", "serverless video rag planning");
+    const results = em.recall('what about "serverless" video-rag?');
+    expect(results[0]!.content).toContain("serverless");
+  });
+});
+
+describe("buildFtsMatchQuery", () => {
+  it("quotes tokens instead of passing raw chat text into MATCH", () => {
+    expect(buildFtsMatchQuery('what about "serverless" video-rag?')).toBe('"what" OR "about" OR "serverless" OR "video-rag"');
+  });
+});
+
+describe("formatRecentSessionContext", () => {
+  it("formats recent user and assistant turns as model-visible continuity context", () => {
+    const ctx = formatRecentSessionContext([
+      {
+        id: "1",
+        session_id: "s",
+        role: "user",
+        content: "first step",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "2",
+        session_id: "s",
+        role: "assistant",
+        content: "done",
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    ]);
+    expect(ctx).toContain("<conversation-history>");
+    expect(ctx).toContain("user: first step");
+    expect(ctx).toContain("assistant: done");
+  });
+});
+
+describe("loadRootMemory", () => {
+  it("loads canonical root MEMORY.md as durable context", () => {
+    const dir = join(tmpdir(), `polymath-root-memory-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(join(dir, "MEMORY.md"), "User prefers short direct answers.");
+      const ctx = loadRootMemory(dir);
+      expect(ctx).toContain("<root-memory>");
+      expect(ctx).toContain("User prefers short direct answers.");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1,6 +1,5 @@
 /**
- * Streaming context scrubber — strips `<memory-context>...</memory-context>`
- * blocks from model output.
+ * Streaming context scrubber — strips internal context blocks from model output.
  *
  * Two purposes:
  *   1. Prevents prompt-injection via recalled memory: if a prior user
@@ -16,13 +15,12 @@
  *                                      tags split across chunks)
  */
 
-const OPEN_TAG = "<memory-context>";
-const CLOSE_TAG = "</memory-context>";
+const INTERNAL_TAGS = ["memory-context", "conversation-history", "root-memory"] as const;
 // Match either case, with optional whitespace inside the tag braces.
-const FENCE_TAG_RE = /<\/?\s*memory-context\s*>/gi;
-const INTERNAL_BLOCK_RE = /<\s*memory-context\s*>[\s\S]*?<\/\s*memory-context\s*>/gi;
+const FENCE_TAG_RE = /<\/?\s*(memory-context|conversation-history|root-memory)\s*>/gi;
+const INTERNAL_BLOCK_RE = /<\s*(memory-context|conversation-history|root-memory)\s*>[\s\S]*?<\/\s*\1\s*>/gi;
 const SYSTEM_NOTE_RE =
-  /\[System note:\s*The following is recalled memory context,\s*NOT new user input\.[\s\S]*?\]\s*/gi;
+  /\[System note:\s*(The following is recalled memory context,\s*NOT new user input\.|Recent messages from this same session\.|Durable user\/project memory loaded from Polymath's root memory file\.)[\s\S]*?\]\s*/gi;
 
 /**
  * Strip the memory-context block(s) and any system-note line from a
@@ -80,25 +78,27 @@ export class StreamingContextScrubber {
       const lower = buf.toLowerCase();
 
       if (this.inSpan) {
-        const closeIdx = lower.indexOf(CLOSE_TAG);
+        const closeMatch = this.findFirstTag(lower, false);
+        const closeIdx = closeMatch.index;
         if (closeIdx === -1) {
           // No close yet. Hold back any suffix that could be a partial
           // close tag. Drop the rest (it's inside a span).
-          const partial = this.maxPartialSuffix(lower, CLOSE_TAG);
+          const partial = this.maxPartialInternalTagSuffix(lower, false);
           this.buf = partial > 0 ? buf.slice(buf.length - partial) : "";
           return out.join("");
         }
         // Found close — discard span body + tag, continue.
-        buf = buf.slice(closeIdx + CLOSE_TAG.length);
+        buf = buf.slice(closeIdx + closeMatch.tag.length);
         this.inSpan = false;
         continue;
       }
 
-      const openIdx = lower.indexOf(OPEN_TAG);
+      const openMatch = this.findFirstTag(lower, true);
+      const openIdx = openMatch.index;
       if (openIdx === -1) {
         // No open tag in buffer. Hold back any suffix that could start
         // an open tag, emit the rest.
-        const partial = this.maxPartialSuffix(lower, OPEN_TAG);
+        const partial = this.maxPartialInternalTagSuffix(lower, true);
         if (partial > 0) {
           out.push(buf.slice(0, buf.length - partial));
           this.buf = buf.slice(buf.length - partial);
@@ -110,7 +110,7 @@ export class StreamingContextScrubber {
 
       // Emit text before the open tag, enter span.
       if (openIdx > 0) out.push(buf.slice(0, openIdx));
-      buf = buf.slice(openIdx + OPEN_TAG.length);
+      buf = buf.slice(openIdx + openMatch.tag.length);
       this.inSpan = true;
     }
 
@@ -144,5 +144,19 @@ export class StreamingContextScrubber {
       if (tag.startsWith(buf.slice(buf.length - i))) return i;
     }
     return 0;
+  }
+
+  private maxPartialInternalTagSuffix(buf: string, opening: boolean): number {
+    return Math.max(...INTERNAL_TAGS.map((tag) => this.maxPartialSuffix(buf, opening ? `<${tag}>` : `</${tag}>`)));
+  }
+
+  private findFirstTag(buf: string, opening: boolean): { index: number; tag: string } {
+    let best = { index: -1, tag: "" };
+    for (const name of INTERNAL_TAGS) {
+      const tag = opening ? `<${name}>` : `</${name}>`;
+      const index = buf.indexOf(tag);
+      if (index >= 0 && (best.index === -1 || index < best.index)) best = { index, tag };
+    }
+    return best;
   }
 }

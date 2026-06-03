@@ -30,6 +30,8 @@ import { MediaEpisodic } from "./memory/media_episodic.js";
 import { MediaWorkflow } from "./memory/media_workflow.js";
 import { MemoryScheduler } from "./memory/scheduler.js";
 import { hybridRecall } from "./memory/hybrid_recall.js";
+import { formatRecentSessionContext } from "./memory/session_context.js";
+import { loadRootMemory } from "./memory/root_memory.js";
 import { createApp } from "./gateway/server.js";
 import { loadOrCreateToken } from "./gateway/auth.js";
 import { serve } from "@hono/node-server";
@@ -38,8 +40,6 @@ import type { AppConfig } from "./config/schema.js";
 import type { LlmAdapter } from "./llm/types.js";
 import type { Logger } from "pino";
 import type Database from "better-sqlite3";
-import type { GpuBroker as _GpuBroker } from "./gpu/broker.js";
-type GpuBroker = _GpuBroker;
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -292,7 +292,15 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
     // Ensure session row exists for FK
     db.prepare("INSERT OR IGNORE INTO sessions (id) VALUES (?)").run(sid);
 
-    // ---- Prefetch: recall relevant long-term memory for this turn. ----
+    // ---- Prefetch: same-session transcript + relevant long-term memory. ----
+    // Every invocation gets a fresh WorkingMemory, so same-session history must
+    // be hydrated from episodic storage before calling the model. Without this,
+    // the agent can store turns but still fail basic message-to-message recall.
+    const recentSessionContext = formatRecentSessionContext(
+      episodicMemory.recallBySession(sid, 24),
+    );
+
+    // ---- Recall relevant long-term memory for this turn. ----
     // Runs a hybrid FTS + embedding search, formats the top hits into a
     // fenced context block, and pre-seeds working memory so the LLM can see
     // them. Keeps the agent feeling continuous across sessions without the
@@ -327,6 +335,9 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
       }
     } catch { /* recall failures are non-fatal */ }
 
+    const rootMemoryContext = loadRootMemory(config.runtime.home_dir);
+    const soul = [rootMemoryContext, recentSessionContext, recalledContext].filter(Boolean).join("\n\n");
+
     const memory = new WorkingMemory();
     const result = await runEpisode(text, {
       llm,
@@ -337,7 +348,7 @@ export async function boot(opts: BootOptions = {}): Promise<RuntimeContext> {
       maxTokenBudget: config.orchestrator.max_token_budget,
       contextWindow: config.llm.context_window,
       sessionId: sid,
-      soul: recalledContext || undefined,
+      soul: soul || undefined,
       onEvent,
     });
 
