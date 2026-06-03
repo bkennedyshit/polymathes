@@ -37,8 +37,15 @@ export function loadOrCreateToken(): string {
 export function authMiddleware() {
   const token = loadToken();
   return async (c: Context, next: Next) => {
-    const path = new URL(c.req.url).pathname;
+    const url = new URL(c.req.url);
+    const path = url.pathname;
     if (!path.startsWith("/api/") || path === "/health" || path === "/metrics") {
+      return next();
+    }
+    if (
+      c.req.method === "GET" &&
+      (path === "/api/auth/codex/status" || path === "/api/models")
+    ) {
       return next();
     }
     if (!token) return c.json({ error: "no auth configured" }, 500);

@@ -60,7 +60,7 @@ export function register(registry: ToolRegistry): void {
       "across every past conversation and stored fact. Use this before asking the user a question " +
       "you might already know the answer to.",
     parameters: z.object({
-      query: z.string().describe("Natural-language query. Example: 'user's BMX content paths' or 'where do I export reels'."),
+      query: z.string().describe("Natural-language query. Example: 'user's creator content paths' or 'where do I export reels'."),
       limit: z.number().optional().describe("Max results. Default 8."),
     }),
     async handler(args) {
@@ -396,6 +396,7 @@ export function register(registry: ToolRegistry): void {
       "Search media files by VISUAL similarity using GPU CLIP embeddings. Use this for queries like " +
       "'find a clean rider shot for the blog' or 'photos visually similar to this hero image'. Joins " +
       "vector hits with metadata so brand/category/duration filters still work after similarity ranking. " +
+      "For exact path, brand, category, or inventory-style requests, prefer media.query. " +
       "Requires the media-memory MCP server to be running and an index to have been built. " +
       "IMPORTANT: CLIP text-to-video scores are typically 0.15-0.25 — this is NORMAL and does NOT mean " +
       "no match. Always return the top results to the user even when scores are below 0.25. " +
@@ -405,11 +406,27 @@ export function register(registry: ToolRegistry): void {
       k: z.number().optional().describe("Top-K nearest neighbors to return. Default 8."),
       brand: z.string().optional().describe("Post-filter: only return results in this brand."),
       category: z.string().optional().describe("Post-filter: only return results in this category."),
+      kind: z.string().optional().describe("Post-filter catalog kind: image | video | audio."),
+      type_filter: z.string().optional().describe("Vector-index type filter: image | video_segment | audio_segment | document | code."),
       min_duration_sec: z.number().optional().describe("Post-filter: minimum video duration."),
       max_duration_sec: z.number().optional().describe("Post-filter: maximum video duration."),
     }),
     async handler(args, ctx) {
       const a = args as any;
+      const requestedK = a.k ?? 8;
+      const typeFilter = a.type_filter ?? (a.kind === "image" ? "image" : a.kind === "video" ? "video_segment" : undefined);
+      const hasPostFilters = Boolean(a.brand || a.category || a.kind || a.min_duration_sec || a.max_duration_sec || typeFilter);
+      const vectorK = hasPostFilters ? Math.max(requestedK, 200) : requestedK;
+      const vectorArgs: Record<string, unknown> = {
+        query: a.query,
+        top_k: vectorK,
+      };
+      if (typeFilter) {
+        vectorArgs.type_filter = typeFilter;
+        // CLIP text->image scores in this index are often under the default
+        // 0.25 threshold, so lower it when the caller asks for a specific type.
+        vectorArgs.min_score = a.min_score ?? -1;
+      }
       let raw: any;
       try {
         // Try MCP registry first (direct path, no ToolRouter indirection).
@@ -417,10 +434,7 @@ export function register(registry: ToolRegistry): void {
         // separate McpRegistry. media-memory.media_search is the correct
         // namespaced name: server=media-memory, tool=media_search.
         if (globalMcpRegistry) {
-          raw = await globalMcpRegistry.callTool("media-memory", "media_search", {
-            query: a.query,
-            top_k: a.k ?? 8,
-          });
+          raw = await globalMcpRegistry.callTool("media-memory", "media_search", vectorArgs);
         } else {
           // Fallback: try the tool router (works if someone wired MCP into it).
           const router = (ctx as any)?.router ?? globalRouter;
@@ -429,7 +443,7 @@ export function register(registry: ToolRegistry): void {
           }
           raw = await router.invoke(
             "media-memory.media_search",
-            { query: a.query, top_k: a.k ?? 8 },
+            vectorArgs,
             { sessionId: (ctx as any)?.sessionId ?? "media.vision_search" },
           );
         }
@@ -457,6 +471,7 @@ export function register(registry: ToolRegistry): void {
       // we still return the result (with no metadata), so vision search
       // always surfaces hits rather than silently dropping them.
       const enriched: Array<any> = [];
+      const seenPaths = new Set<string>();
       for (const hit of hits) {
         const rawPath = hit.path ?? (hit as any).file ?? "";
         if (!rawPath) continue;
@@ -471,15 +486,42 @@ export function register(registry: ToolRegistry): void {
         if (item) {
           if (a.brand && item.brand !== a.brand) continue;
           if (a.category && item.category !== a.category) continue;
+          if (a.kind && item.kind !== a.kind) continue;
           // Only apply duration filters when the value is > 0 (0 means "no filter").
           if (a.min_duration_sec && (!item.duration_sec || item.duration_sec < a.min_duration_sec)) continue;
           if (a.max_duration_sec && (item.duration_sec ?? Infinity) > a.max_duration_sec) continue;
         }
+        const dedupePath = (item?.path ?? path).replace(/\\/g, "/").toLowerCase();
+        if (seenPaths.has(dedupePath)) continue;
+        seenPaths.add(dedupePath);
         enriched.push({
           path,
           score: hit.score ?? (hit as any).similarity ?? null,
           ...(item ? { metadata: item } : {}),
         });
+        if (enriched.length >= requestedK) break;
+      }
+
+      if (enriched.length === 0 && mediaEpisodic && hasPostFilters) {
+        const fallbackKind = a.kind ?? (typeFilter === "image" ? "image" : undefined);
+        const fallback = mediaEpisodic.query({
+          brand: a.brand,
+          category: a.category,
+          kind: fallbackKind,
+          min_duration_sec: a.min_duration_sec,
+          max_duration_sec: a.max_duration_sec,
+          limit: requestedK,
+        });
+        if (fallback.length > 0) {
+          return {
+            ok: true,
+            results: fallback.map((item) => ({ path: item.path, score: null, metadata: item })),
+            source_hit_count: hits.length,
+            returned: fallback.length,
+            fallback: "media.query",
+            note: "Vector search produced no filtered hits, so results came from the structured media catalog.",
+          };
+        }
       }
 
       return { ok: true, results: enriched, source_hit_count: hits.length, returned: enriched.length };

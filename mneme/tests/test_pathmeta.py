@@ -11,13 +11,13 @@ def test_infer_brand_none_when_no_root():
 
 
 def test_workspace_root():
-    assert infer_workspace_root("/x/input/bmx/raw/a.mp4") == "input"
-    assert infer_workspace_root("/x/archive/bmx/p.jpg") == "archive"
+    assert infer_workspace_root("/x/input/brand-a/raw/a.mp4") == "input"
+    assert infer_workspace_root("/x/archive/brand-a/p.jpg") == "archive"
 
 
 def test_classify_intent_folder_hint_wins():
-    assert classify_intent("/x/content/bmx/reels/a.mp4") == "reel"
-    assert classify_intent("/x/content/bmx/thumbnails/a.png") == "thumbnail"
+    assert classify_intent("/x/content/brand-a/reels/a.mp4") == "reel"
+    assert classify_intent("/x/content/brand-a/thumbnails/a.png") == "thumbnail"
 
 
 def test_classify_intent_aspect_ratio_fallback():

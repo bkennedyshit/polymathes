@@ -9,7 +9,7 @@ def _vec(*xs):
 
 def test_save_and_count(tmp_path):
     store = Store(tmp_path / "t.db")
-    store.save_asset("/a.jpg", "image", _vec(1, 0, 0), metadata={"brand": "bmx"})
+    store.save_asset("/a.jpg", "image", _vec(1, 0, 0), metadata={"brand": "brand-a"})
     store.save_asset("/b.jpg", "image", _vec(0, 1, 0))
     assert store.count() == 2
 
@@ -43,9 +43,9 @@ def test_type_filter(tmp_path):
 
 def test_get_by_id_roundtrip(tmp_path):
     store = Store(tmp_path / "t.db")
-    aid = store.save_asset("/a.jpg", "image", _vec(1, 0, 0), metadata={"brand": "bmx"})
+    aid = store.save_asset("/a.jpg", "image", _vec(1, 0, 0), metadata={"brand": "brand-a"})
     rec = store.get_by_id(aid)
-    assert rec is not None and rec.path == "/a.jpg" and rec.metadata["brand"] == "bmx"
+    assert rec is not None and rec.path == "/a.jpg" and rec.metadata["brand"] == "brand-a"
     assert store.get_by_id(99999) is None
 
 

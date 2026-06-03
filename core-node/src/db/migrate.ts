@@ -134,7 +134,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
       derived_id TEXT REFERENCES media_items(id),
       step TEXT NOT NULL,        -- 'analyze' | 'edit' | 'reel' | 'crop' | 'post' | 'repurpose'
       platform TEXT,             -- when step='post': 'instagram' | 'tiktok' | 'youtube' | ...
-      tool TEXT,                 -- what actor did the step: 'bmx-session-editor' | 'resolve' | 'user'
+      tool TEXT,                 -- what actor did the step: 'session-highlight-editor' | 'resolve' | 'user'
       session_id TEXT,           -- which agent session was involved, if any
       note TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),

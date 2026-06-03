@@ -9,6 +9,9 @@ export const SandboxPolicySchema = z.object({
   // automation — sits in `requireApproval` instead so the orchestrator
   // can prompt the user.
   allow: z.array(z.string()).default([
+    // Trust registered tools by default. Dangerous tool families are
+    // matched by requireApproval before this allow-list is checked.
+    "*",
     "core.*",
     "memory.*",
     "media.*",
@@ -16,12 +19,21 @@ export const SandboxPolicySchema = z.object({
     "gpu.*",
     "skill.*",
     "skills.*",
+    "skill_list",
+    "skill_search",
+    "skill_run",
+    "skill_install",
+    "skill_reload",
     "comms.*",
     "channel.*",
     "session.*",
     "sessions.*",
     "history.*",
     "cron.*",
+    "fs_read",
+    "fs_stat",
+    "fs_glob",
+    "fs_ls",
     "files.read",
     "files.stat",
     "files.glob",
@@ -32,6 +44,8 @@ export const SandboxPolicySchema = z.object({
     "web.search",
     "web.fetch",
     "web.fetch_text",
+    "web_search",
+    "web_fetch",
     "vision.*",
     "voice.*",
     "media-memory.search",
@@ -43,14 +57,37 @@ export const SandboxPolicySchema = z.object({
   requireApproval: z.array(z.string()).default([
     "terminal.run",
     "terminal.exec",
+    "shell_run",
+    "shell_run_streaming",
+    "shell_run_script",
+    "shell_*",
     "files.write",
     "files.fs_write",
     "files.fs_append",
     "files.fs_delete",
+    "fs_write",
+    "fs_edit",
+    "fs_move",
+    "fs_mkdir",
+    "fs_delete",
     "processes.spawn",
     "processes.kill",
+    "process_spawn",
+    "process_kill",
+    "proc_spawn",
+    "proc_kill",
     "browser.*",
+    "browser_*",
+    "browser_open",
+    "browser_click",
+    "browser_type",
+    "browser_screenshot",
+    "browser_eval",
+    "browser_html",
+    "browser_close",
     "code_exec.*",
+    "execute_code",
+    "web_screenshot",
     "input.*",                // virtual-input MCP — keystrokes/clicks
   ]),
   maxCallsPerMinute: z.record(z.string(), z.number()).default({}),
@@ -131,6 +168,12 @@ export function evaluate(
 
   // Deny > allow precedence
   if (matchesAny(toolName, policy.deny)) return { outcome: "deny", reason: "denied by policy" };
+
+  // Approval-gated tools are intentionally not in the normal allow-list.
+  // Check this before the allow-list so shell/browser/write actions can
+  // reach the approval queue instead of being mislabeled as "not allowed".
+  if (matchesAny(toolName, policy.requireApproval)) return { outcome: "approval_required" };
+
   if (!matchesAny(toolName, policy.allow)) return { outcome: "deny", reason: "not in allow list" };
 
   // FS path checking
@@ -144,9 +187,6 @@ export function evaluate(
 
   // Rate limiting
   if (checkRateLimit(toolName, policy)) return { outcome: "deny", reason: "rate limit exceeded" };
-
-  // Approval required
-  if (matchesAny(toolName, policy.requireApproval)) return { outcome: "approval_required" };
 
   return { outcome: "allow" };
 }

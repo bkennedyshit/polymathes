@@ -1,7 +1,15 @@
 {
   "name": "@polymath/gateway",
   "version": "0.1.1",
+  "description": "Local-first AI agent gateway for creator workflows, media memory, skills, and GPU-aware tool orchestration.",
   "type": "module",
+  "license": "MIT",
+  "author": "Bill Kennedy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bkennedyshit/polymathes.git",
+    "directory": "core-node"
+  },
   "bin": {
     "polymath": "./dist/polymath.cjs"
   },

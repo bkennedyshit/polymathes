@@ -99,7 +99,7 @@ polymath/
 - All capabilities local on one machine
 - GPU is the local RTX 3090 / 4090 / 5090
 - Transport: CLI + Web UI + optional Telegram bot for remote commands
-- Example user: BMX content creator editing footage, posting across YouTube/Reels/TikTok
+- Example user: content creator editing footage, posting across YouTube/Reels/TikTok
 
 ### Profile B: Cloud GPU + remote workstation (advanced)
 
@@ -130,7 +130,7 @@ Ordered by priority:
 2. `virtual-input` Linux functional (done), Windows via Interception
 3. `ide-bridge` extracted from monorepo, published as MCP server
 4. `core` runtime skeleton — MCP broker, task dispatch, single CLI transport
-5. One end-to-end demo: "Find all BMX clips where I do a barspin → export them as a highlight reel"
+5. One end-to-end demo: "Find all clips matching a creator-defined moment → export them as a highlight reel"
 
 Everything else (content-pipeline, voice-loop, web UI, Telegram) is v2+.
 

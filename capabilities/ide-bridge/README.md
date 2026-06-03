@@ -95,4 +95,4 @@ Most IDEs don't detect CDP attachment (they enable it themselves for extensions)
 
 ## Import from monorepo
 
-The existing implementation lives in `nepa-ai-monorepo/clawhub-skills/` (as noted by Bill). TODO: extract the minimum viable CDP driver + prompt adapters here.
+The existing implementation is being extracted from a private workspace. TODO: extract the minimum viable CDP driver + prompt adapters here.

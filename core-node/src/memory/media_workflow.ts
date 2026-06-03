@@ -5,7 +5,7 @@
  *
  * Steps we track:
  *   analyze   — video-analyze skill ran against it
- *   edit      — bmx-session-editor or similar produced an edit plan
+ *   edit      — session-highlight-editor or similar produced an edit plan
  *   reel      — a reel was extracted from it
  *   crop      — a platform crop/reframe was made
  *   post      — published to a platform (platform column populated)

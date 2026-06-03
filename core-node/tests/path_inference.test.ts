@@ -5,7 +5,7 @@ beforeEach(() => _resetPathRulesCache());
 
 // Inference is brand-agnostic — the test fixtures use generic placeholder
 // brand names ("alpha", "beta", "art-brand") so this suite never asserts
-// owner-specific brands like bmx/nepa-ai. That would be a leak.
+// owner-specific brands. That would be a leak.
 
 describe("inferFromPath — input/ tree", () => {
   it("infers brand and category=raw from input/<brand>/raw/", () => {
@@ -150,7 +150,7 @@ describe("inferFromPath — robustness", () => {
   it("doesn't hardcode owner brand names", () => {
     // Audit: paths with owner-specific brands resolve via the same
     // pattern-based logic, NOT via hardcoded knowledge of those names.
-    const ownerBrands = ["bmx", "nepa-ai", "axon", "blasting", "gym"];
+    const ownerBrands = ["brand-a", "brand-b", "creator-hub", "studio", "gym"];
     for (const b of ownerBrands) {
       const r = inferFromPath(`D:/AGENT/input/${b}/raw/x.mp4`);
       expect(r.brand).toBe(b);  // captured from <brand>, not assumed

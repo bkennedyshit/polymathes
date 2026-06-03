@@ -192,7 +192,7 @@ describe("audit: shipped artifacts contain no owner-brand names", () => {
     const tplDir = resolve(here, "..", "templates", "agent-layout");
     expect(existsSync(tplDir)).toBe(true);
 
-    const ownerBrands = ["bmx", "nepa-ai", "nepa_ai", "axon", "blasting"];
+    const ownerBrands = ["brand-a", "brand-b", "creator-hub", "studio", "private-skill"];
     const seen: string[] = [];
 
     function walk(dir: string): void {
@@ -216,7 +216,7 @@ describe("audit: shipped artifacts contain no owner-brand names", () => {
     const rulesPath = resolve(here, "..", "templates", "path-rules.json");
     expect(existsSync(rulesPath)).toBe(true);
     const txt = readFileSync(rulesPath, "utf-8").toLowerCase();
-    for (const b of ["bmx", "nepa-ai", "nepa_ai", "axon", "blasting"]) {
+    for (const b of ["brand-a", "brand-b", "creator-hub", "studio", "private-skill"]) {
       expect(txt).not.toContain(b);
     }
   });

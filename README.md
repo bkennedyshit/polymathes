@@ -55,7 +55,7 @@ It's RetroArch for content. The convention is the contract.
 
 A C++ binary, not a Python wrapper. CLIP embeddings on your videos and photos, indexed in milliseconds, queryable by natural language or by-image similarity. Joins back to the structured catalog so you can ask:
 
-> *"Find me a clean rider shot for a blog header — must be from the bmx brand, photo only, upscaled, taken in 2024 or later."*
+> *"Find me a clean product shot for a blog header — must be from the brand-a catalog, photo only, upscaled, taken in 2024 or later."*
 
 The agent runs `media.vision_search`, gets vector hits, joins with metadata, returns the top 5. No cloud round-trip. No API spend. Your archive stays on your drive.
 
@@ -63,7 +63,7 @@ The agent runs `media.vision_search`, gets vector hits, joins with metadata, ret
 
 You and the agent share one GPU. When you open DaVinci Resolve to render, Polymath notices VRAM pressure and steps off. When you finish, she comes back. You never manage `keep_alive` flags or restart anything.
 
-Same broker handles model swaps for skills: `bmx-session-editor` declares `model: qwen2.5vl:7b` in its frontmatter, so when you ask the agent to edit a video, she evacuates her main brain (gpt-oss:20b), loads the vision model, runs the skill, and lazy-reloads her brain on the next message. Zero manual VRAM management.
+Same broker handles model swaps for skills: `session-highlight-editor` declares `model: qwen2.5vl:7b` in its frontmatter, so when you ask the agent to analyze a video session, she evacuates her main brain (gpt-oss:20b), loads the vision model, runs the skill, and lazy-reloads her brain on the next message. Zero manual VRAM management.
 
 ### 4. Skills are products
 
@@ -71,8 +71,8 @@ The framework is open. Your skills are private — gitignored by default, stored
 
 ```yaml
 ---
-name: bmx-session-editor
-description: Edit a raw session into highlights
+name: session-highlight-editor
+description: Analyze a raw creator session into highlights
 model: qwen2.5vl:7b
 toolsets: [files, media]
 ---
@@ -80,7 +80,7 @@ toolsets: [files, media]
 You are a specialist editor that…
 ```
 
-The framework discovers it, registers it as `skill.bmx-session-editor`, and the agent calls it like any other tool. Sell skills, package skills, keep skills private — your call.
+The framework discovers it, registers it as `skill.session-highlight-editor`, and the agent calls it like any other tool. Sell skills, package skills, keep skills private — your call.
 
 ---
 
@@ -249,4 +249,4 @@ MIT. See [LICENSE](LICENSE). The whole point is adoption — use it, fork it, sh
 
 ## About
 
-Built by [Bill Kennedy](https://github.com/bkennedyshit) — content creator, BMX rider, systems engineer. Polymath is the agent I built because the existing ones didn't know my content workflow. If you build something cool with it, open an issue or DM. I want to see it.
+Built by [Bill Kennedy](https://github.com/bkennedyshit) — content creator and systems engineer. Polymath is the agent I built because the existing ones didn't know my content workflow. If you build something cool with it, open an issue or DM. I want to see it.

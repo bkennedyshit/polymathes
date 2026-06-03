@@ -64,7 +64,7 @@ is a story no other agent tells.
 ## Honest status of editing in the repo today
 
 - There is **no** `ffmpeg`/trim/render code in the public repo yet (I checked).
-- Skills *can* declare a model (e.g., `bmx-session-editor: qwen2.5vl`) and the
+- Skills *can* declare a model (e.g., `session-highlight-editor: qwen2.5vl`) and the
   broker *can* swap it, but the editing skill body itself isn't public.
 - The advanced video/audio "omni" extras are **stubbed** behind a build flag.
 

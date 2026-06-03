@@ -156,7 +156,7 @@ come back tagged automatically:
 <root>/archive/<brand>/photos/x.jpg     → brand=<brand>, intent=photo
 ```
 
-That's why you can ask for *"the bmx brand, photo only, vertical"* and get it —
+That's why you can ask for *"the brand-a catalog, photo only, vertical"* and get it —
 the tags ride along with every search result.
 
 ---

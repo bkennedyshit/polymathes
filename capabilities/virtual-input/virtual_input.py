@@ -259,7 +259,7 @@ class VirtualInput:
 
         self.device = UInput(
             capabilities,
-            name="NEPA AI Virtual Mouse",
+            name="Polymath Virtual Mouse",
             vendor=0x1234,
             product=0x5678,
             version=1,
@@ -533,7 +533,7 @@ if __name__ == "__main__":
             print("Clicking...")
             vi.click()
             print("Typing test...")
-            vi.type_text("Hello from NEPA AI virtual input")
+            vi.type_text("Hello from Polymath virtual input")
             print("✅ Test complete — your desktop was NOT affected")
 
         elif args.click:

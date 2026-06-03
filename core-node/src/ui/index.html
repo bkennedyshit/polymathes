@@ -58,22 +58,55 @@ tailwind.config = {
 <div id="toast-root" class="fixed bottom-4 right-4 z-[100] space-y-2"></div>
 <script>
 const e = React.createElement;
+window.__POLYMATH_TOKEN__ = "__POLYMATH_TOKEN__";
 
 function getToken() {
+  if (window.__POLYMATH_TOKEN__ && window.__POLYMATH_TOKEN__ !== '__POLYMATH_TOKEN__') {
+    localStorage.setItem('polymath_token', window.__POLYMATH_TOKEN__);
+    return window.__POLYMATH_TOKEN__;
+  }
   let t = localStorage.getItem('polymath_token');
   if (!t) { t = prompt('Enter bearer token:'); if (t) localStorage.setItem('polymath_token', t); }
   return t || '';
 }
-const TOKEN = getToken();
-const authHdr = { 'Authorization': 'Bearer ' + TOKEN };
-const jsonHdrs = { ...authHdr, 'Content-Type': 'application/json' };
+let TOKEN = getToken();
+function authHeaders() { return { 'Authorization': 'Bearer ' + TOKEN }; }
+function jsonHeaders() { return { ...authHeaders(), 'Content-Type': 'application/json' }; }
 
 async function api(path, init) {
-  const opts = { ...init, headers: { ...(init?.body ? jsonHdrs : authHdr), ...(init?.headers || {}) } };
+  const opts = { ...init, headers: { ...(init?.body ? jsonHeaders() : authHeaders()), ...(init?.headers || {}) } };
   const res = await fetch(path, opts);
+  if (res.status === 401) {
+    localStorage.removeItem('polymath_token');
+    TOKEN = prompt('Polymath local token changed. Paste bearer token from ~/.polymath/auth.key:') || '';
+    if (TOKEN) localStorage.setItem('polymath_token', TOKEN);
+    const retry = await fetch(path, { ...init, headers: { ...(init?.body ? jsonHeaders() : authHeaders()), ...(init?.headers || {}) } });
+    if (retry.ok) {
+      const ct = retry.headers.get('content-type') || '';
+      return ct.includes('application/json') ? retry.json() : retry.text();
+    }
+    let retryMsg = retry.status + ' ' + retry.statusText;
+    try { const j = await retry.json(); retryMsg = j.error || retryMsg; } catch {}
+    throw new Error(retryMsg);
+  }
   if (!res.ok) { let msg = res.status + ' ' + res.statusText; try { const j = await res.json(); msg = j.error || msg; } catch {} throw new Error(msg); }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('application/json') ? res.json() : res.text();
+}
+
+async function authedBlobUrl(path) {
+  const res = await fetch(path, { headers: authHeaders() });
+  if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+  return URL.createObjectURL(await res.blob());
+}
+
+function mediaFilePath(item, extra = '') {
+  return '/api/media/' + item.id + '/file' + (extra ? '?' + extra : '');
+}
+
+function mediaPlayablePath(item) {
+  if (item?.kind === 'video') return '/api/media/' + item.id + '/preview.mp4';
+  return mediaFilePath(item);
 }
 
 function useFetch(url, deps = []) {
@@ -1003,7 +1036,7 @@ function IndexMediaForm() {
     finally { setBusy(false); }
   };
   return e('div', { className: 'flex gap-2' },
-    e('input', { value: path, onChange: ev => setPath(ev.target.value), placeholder: 'D:\\AGENT\\content\\bmx\\reels', className: 'flex-1 bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
+    e('input', { value: path, onChange: ev => setPath(ev.target.value), placeholder: 'D:\\AGENT\\content\\brand-a\\reels', className: 'flex-1 bg-bg-700 border border-bg-600 rounded-lg px-3 py-1.5 text-sm mono outline-none focus:border-accent-dim' }),
     e('button', { onClick: run, disabled: busy, className: 'bg-accent hover:bg-accent-hover text-bg-900 font-medium rounded-lg px-4 text-sm disabled:opacity-50' }, busy ? 'Working…' : 'Index')
   );
 }
@@ -1062,6 +1095,55 @@ function DoctorPanel() {
 }
 
 // ---------- Media (catalog browser) ----------
+function MediaPreview({ item, mode = 'thumb' }) {
+  const [url, setUrl] = React.useState('');
+  React.useEffect(() => {
+    let alive = true;
+    let objectUrl = '';
+    setUrl('');
+    if (!item?.id || !['image', 'video', 'audio'].includes(item.kind)) return;
+    authedBlobUrl(mediaPlayablePath(item))
+      .then(u => {
+        objectUrl = u;
+        if (alive) setUrl(u);
+        else URL.revokeObjectURL(u);
+      })
+      .catch(() => { if (alive) setUrl(''); });
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [item?.id, item?.kind]);
+
+  const base = mode === 'detail'
+    ? 'w-full bg-bg-900 border border-bg-700 rounded-lg overflow-hidden'
+    : 'w-16 h-16 bg-bg-900 border border-bg-700 rounded-md overflow-hidden flex-shrink-0';
+
+  const box = (...children) => e('div', { className: base + (mode === 'thumb' ? ' flex items-center justify-center' : '') }, ...children);
+
+  if (!['image', 'video', 'audio'].includes(item?.kind)) {
+    return box(e('span', { className: 'text-xs text-gray-600 mono' }, item?.kind || 'file'));
+  }
+  if (!url) return box(e('div', { className: 'w-full h-full pulse-dot' }));
+
+  if (item.kind === 'image') {
+    return box(e('img', {
+      src: url,
+      className: mode === 'detail' ? 'w-full max-h-[420px] object-contain bg-black' : 'w-full h-full object-cover',
+      loading: 'lazy',
+    }));
+  }
+  if (item.kind === 'video') {
+    return box(e('video', {
+      src: url,
+      controls: mode === 'detail',
+      muted: mode !== 'detail',
+      className: mode === 'detail' ? 'w-full max-h-[420px] bg-black' : 'w-full h-full object-cover',
+    }));
+  }
+  return box(e('audio', { src: url, controls: true, className: 'w-full' }));
+}
+
 function MediaPanel() {
   const [stats, setStats] = React.useState(null);
   const [filter, setFilter] = React.useState({ brand: '', category: '', limit: 50 });
@@ -1172,9 +1254,10 @@ function MediaPanel() {
         !items ? e('div', { className: 'p-6 text-gray-500' }, 'Loading…') :
         !items.length ? e('div', { className: 'p-6 text-sm text-gray-500 text-center' }, 'no items match your filter') :
         e('ul', { className: 'divide-y divide-bg-700 max-h-96 overflow-y-auto scrollbar-thin' }, items.map((m, i) =>
-          e('li', { key: m.id, onClick: () => setSelected(m), className: 'px-4 py-2 hover:bg-bg-700/50 cursor-pointer ' + (selected?.id === m.id ? 'bg-accent/10' : '') },
-            e('div', { className: 'flex justify-between items-start gap-3' },
+          e('li', { key: m.id, onClick: () => setSelected(m), className: 'px-4 py-3 hover:bg-bg-700/50 cursor-pointer ' + (selected?.id === m.id ? 'bg-accent/10' : '') },
+            e('div', { className: 'flex items-center gap-3' },
               e('div', { className: 'min-w-0 flex-1' },
+                e('div', { className: 'text-sm font-medium truncate' }, m.path.split(/[\\/]/).pop()),
                 e('div', { className: 'text-xs mono text-gray-500 truncate' }, m.path),
                 e('div', { className: 'flex gap-2 mt-1 text-xs' },
                   m.brand && e('span', { className: 'bg-bg-700 px-2 py-0.5 rounded mono' }, m.brand),
@@ -1182,7 +1265,8 @@ function MediaPanel() {
                   m.kind && e('span', { className: 'text-gray-500 mono' }, m.kind)
                 )
               ),
-              m.duration_sec && e('span', { className: 'text-xs mono text-gray-500 flex-shrink-0' }, Math.round(m.duration_sec) + 's')
+              m.duration_sec && e('span', { className: 'text-xs mono text-gray-500 flex-shrink-0' }, Math.round(m.duration_sec) + 's'),
+              e(MediaPreview, { item: m })
             )
           )
         ))
@@ -1191,9 +1275,25 @@ function MediaPanel() {
       // Detail / pipeline
       e('div', { className: 'bg-bg-800 border border-bg-700 rounded-xl p-4' },
         !selected ? e('div', { className: 'text-sm text-gray-500 text-center py-12' }, 'pick a file to see its workflow timeline') :
-        e('div', { className: 'space-y-3' },
-          e('h3', { className: 'font-semibold mono text-sm break-all' }, selected.path.split(/[\\/]/).pop()),
-          e('div', { className: 'text-xs text-gray-500 mono break-all' }, selected.path),
+        e('div', { className: 'space-y-4' },
+          e('div', { className: 'space-y-2' },
+            e('h3', { className: 'font-semibold mono text-sm break-all' }, selected.path.split(/[\\/]/).pop()),
+            e('div', { className: 'text-xs text-gray-500 mono break-all' }, selected.path),
+            e('div', { className: 'flex gap-2' },
+              e('button', {
+                onClick: async () => {
+                  try { window.open(await authedBlobUrl(mediaPlayablePath(selected)), '_blank'); }
+                  catch { toast('preview failed', 'error'); }
+                },
+                className: 'bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1 text-xs'
+              }, 'Open preview'),
+              e('button', {
+                onClick: () => navigator.clipboard?.writeText(selected.path).then(() => toast('path copied', 'success')).catch(() => toast('copy failed', 'error')),
+                className: 'bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-3 py-1 text-xs'
+              }, 'Copy path')
+            )
+          ),
+          e(MediaPreview, { item: selected, mode: 'detail' }),
           selected.metadata && Object.keys(selected.metadata).length > 0 && e('div', null,
             e('div', { className: 'text-xs uppercase text-gray-500 mt-2 mb-1' }, 'metadata'),
             e('pre', { className: 'text-xs mono bg-bg-900 p-2 rounded overflow-x-auto' }, JSON.stringify(selected.metadata, null, 2))
@@ -1327,6 +1427,7 @@ function GpuPanel() {
 
 // ---------- Settings ----------
 const PROVIDERS = [
+  { id: 'openai-codex', label: 'Codex / ChatGPT', tag: 'cloud', defaultUrl: '', defaultModel: 'gpt-5.5', notes: 'Uses your ChatGPT/Codex subscription auth.' },
   { id: 'ollama', label: 'Ollama', tag: 'local', defaultUrl: 'http://localhost:11434/v1', notes: 'Local models — free, offline.' },
   { id: 'lmstudio', label: 'LM Studio', tag: 'local', defaultUrl: 'http://localhost:1234/v1', notes: 'Local GUI for GGUF models.' },
   { id: 'openai', label: 'OpenAI', tag: 'cloud', defaultUrl: 'https://api.openai.com/v1', notes: 'GPT-4o, o1, etc.' },
@@ -1344,6 +1445,7 @@ const PROVIDERS = [
 
 function SettingsPanel({ onLlmChange }) {
   const [data, , reload] = useFetch('/api/config');
+  const [codexStatus, setCodexStatus] = React.useState({ loading: true });
   const [provider, setProvider] = React.useState('');
   const [model, setModel] = React.useState('');
   const [baseUrl, setBaseUrl] = React.useState('');
@@ -1361,9 +1463,23 @@ function SettingsPanel({ onLlmChange }) {
     }
   }, [data]);
 
+  const reloadCodexStatus = React.useCallback(() => {
+    setCodexStatus(s => ({ ...(s || {}), loading: true }));
+    api('/api/auth/codex/status')
+      .then(s => setCodexStatus({ ...s, loading: false }))
+      .catch(err => setCodexStatus({ configured: false, loading: false, error: err.message }));
+  }, []);
+
+  React.useEffect(() => {
+    reloadCodexStatus();
+    const id = setInterval(reloadCodexStatus, 5000);
+    return () => clearInterval(id);
+  }, [reloadCodexStatus]);
+
   const pickProvider = (p) => {
     setProvider(p.id);
     if (p.defaultUrl && !baseUrl) setBaseUrl(p.defaultUrl);
+    if (p.defaultModel) setModel(p.defaultModel);
   };
 
   const save = async () => {
@@ -1378,6 +1494,14 @@ function SettingsPanel({ onLlmChange }) {
   };
 
   const selected = PROVIDERS.find(p => p.id === provider);
+  const codexActive = provider === 'openai-codex';
+  const codexConfigured = codexStatus?.configured || codexActive;
+  const codexState = codexStatus?.state || (codexActive ? 'active' : codexStatus?.loading ? 'checking' : 'missing');
+  const codexDetail = codexStatus?.configured
+    ? (codexStatus.account_id + ' · ' + codexStatus.state + ' · ' + codexStatus.age_minutes + 'm')
+    : codexActive
+      ? ('active provider · ' + (model || 'gpt-5.5'))
+      : (codexStatus?.loading ? 'checking auth status' : (codexStatus?.error || 'not configured'));
 
   return e('div', { className: 'p-6 space-y-6 max-w-3xl' },
     e('h2', { className: 'text-xl font-semibold' }, 'Settings'),
@@ -1386,6 +1510,20 @@ function SettingsPanel({ onLlmChange }) {
       e('div', null,
         e('h3', { className: 'font-semibold mb-1' }, 'LLM Provider'),
         e('p', { className: 'text-sm text-gray-500' }, 'Changes apply immediately — no restart. Local providers are free.')
+      ),
+      e('div', { className: 'bg-bg-900 border border-bg-700 rounded-lg p-3 flex items-center justify-between text-sm' },
+        e('div', null,
+          e('div', { className: 'font-medium' }, 'Codex / ChatGPT auth'),
+          e('div', { className: 'text-xs text-gray-500 mono' },
+            codexDetail
+          )
+        ),
+        e('div', { className: 'flex items-center gap-2' },
+          e('button', { onClick: reloadCodexStatus, className: 'bg-bg-700 hover:bg-bg-600 border border-bg-600 rounded-md px-2 py-1 text-xs' }, 'Refresh'),
+          e('span', { className: 'text-xs mono px-2 py-1 rounded ' + (codexConfigured ? 'bg-green-500/15 text-green-300' : 'bg-yellow-500/15 text-yellow-300') },
+            codexState
+          )
+        )
       ),
       e('div', { className: 'grid grid-cols-2 md:grid-cols-3 gap-2' }, PROVIDERS.map(p =>
         e('button', {

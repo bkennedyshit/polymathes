@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { ulid } from "ulid";
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { createReadStream, readFileSync, mkdirSync, writeFileSync, existsSync, statSync, rmSync, renameSync } from "node:fs";
 import { join, dirname, extname, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { authMiddleware } from "./auth.js";
+import { authMiddleware, loadToken } from "./auth.js";
 import { PairingManager } from "../security/pairing.js";
 import { ApprovalQueue } from "../security/approval.js";
 import type { RuntimeContext } from "../main.js";
@@ -27,6 +29,83 @@ function resolveUiHtml(): string {
   return "<!doctype html><h1>Polymath</h1><p>UI bundle not found. Run `pnpm build`.</p>";
 }
 const UI_HTML = resolveUiHtml();
+
+const MEDIA_MIME: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+};
+
+function mediaContentType(path: string): string {
+  return MEDIA_MIME[extname(path).toLowerCase()] ?? "application/octet-stream";
+}
+
+function findFfmpeg(): string | null {
+  const configured = process.env.POLYMATH_FFMPEG;
+  const candidates = configured?.trim() ? [configured, "ffmpeg"] : ["ffmpeg"];
+  for (const p of candidates) {
+    const resolved = p === "ffmpeg" ? p : resolve(p);
+    if (resolved === "ffmpeg" || existsSync(resolved)) return resolved;
+  }
+  return null;
+}
+
+async function ensureBrowserVideoPreview(id: string, sourcePath: string): Promise<string> {
+  const dir = join(homedir(), ".polymath", "media-previews");
+  mkdirSync(dir, { recursive: true });
+  const out = join(dir, `${id}.mp4`);
+  if (existsSync(out) && statSync(out).size > 0) return out;
+
+  const ffmpeg = findFfmpeg();
+  if (!ffmpeg) throw new Error("ffmpeg not found for browser-safe video preview generation");
+
+  const tmp = join(dir, `${id}.tmp.mp4`);
+  if (existsSync(tmp)) {
+    try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
+  }
+
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(ffmpeg, [
+      "-y",
+      "-ss", "0",
+      "-i", sourcePath,
+      "-t", "30",
+      "-vf", "scale='min(1280,iw)':-2",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-crf", "28",
+      "-movflags", "+faststart",
+      "-an",
+      tmp,
+    ], { windowsHide: true });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0 && existsSync(tmp)) {
+        try {
+          renameSync(tmp, out);
+          resolvePromise();
+        } catch (e) { reject(e); }
+      } else {
+        reject(new Error(stderr.slice(-1000) || `ffmpeg exited ${code}`));
+      }
+    });
+  });
+
+  return out;
+}
 
 export interface CreateAppOpts {
   skillRegistry?: SkillRegistry;
@@ -171,7 +250,7 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");
     c.header("Expires", "0");
-    return c.html(UI_HTML);
+    return c.html(UI_HTML.replace("__POLYMATH_TOKEN__", loadToken() ?? ""));
   });
 
   // Skills
@@ -702,6 +781,98 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     } catch (e: any) { return c.json({ error: e.message }, 500); }
   });
 
+  app.get("/api/media/:id/file", async (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    try {
+      const { MediaEpisodic } = await import("../memory/media_episodic.js");
+      const ep = new MediaEpisodic(ctx.db);
+      const item = ep.getById(c.req.param("id"));
+      if (!item) return c.json({ error: "not found" }, 404);
+      if (!existsSync(item.path)) return c.json({ error: "file missing on disk", path: item.path }, 404);
+
+      const stats = statSync(item.path);
+      const contentType = mediaContentType(item.path);
+      const inline = c.req.query("download") !== "1";
+      const filename = item.path.split(/[\\/]/).pop() ?? item.id;
+      const baseHeaders: Record<string, string> = {
+        "Content-Type": contentType,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=60",
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${filename}"`,
+      };
+
+      const range = c.req.header("range");
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (!match) return c.body(null, 416);
+        const start = match[1] ? parseInt(match[1], 10) : 0;
+        const end = match[2] ? Math.min(parseInt(match[2], 10), stats.size - 1) : stats.size - 1;
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+          return c.body(null, 416, { "Content-Range": `bytes */${stats.size}` });
+        }
+        return new Response(Readable.toWeb(createReadStream(item.path, { start, end })) as any, {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Length": String(end - start + 1),
+            "Content-Range": `bytes ${start}-${end}/${stats.size}`,
+          },
+        });
+      }
+
+      return new Response(Readable.toWeb(createReadStream(item.path)) as any, {
+        headers: {
+          ...baseHeaders,
+          "Content-Length": String(stats.size),
+        },
+      });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
+  app.get("/api/media/:id/preview.mp4", async (c) => {
+    if (!hasDb) return c.json({ error: "no db" }, 500);
+    try {
+      const { MediaEpisodic } = await import("../memory/media_episodic.js");
+      const ep = new MediaEpisodic(ctx.db);
+      const item = ep.getById(c.req.param("id"));
+      if (!item) return c.json({ error: "not found" }, 404);
+      if (item.kind !== "video") return c.json({ error: "not a video" }, 400);
+      if (!existsSync(item.path)) return c.json({ error: "file missing on disk", path: item.path }, 404);
+
+      const previewPath = await ensureBrowserVideoPreview(item.id, item.path);
+      const stats = statSync(previewPath);
+      const range = c.req.header("range");
+      const baseHeaders: Record<string, string> = {
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": `inline; filename="${item.id}-preview.mp4"`,
+      };
+
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (!match) return c.body(null, 416);
+        const start = match[1] ? parseInt(match[1], 10) : 0;
+        const end = match[2] ? Math.min(parseInt(match[2], 10), stats.size - 1) : stats.size - 1;
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+          return c.body(null, 416, { "Content-Range": `bytes */${stats.size}` });
+        }
+        return new Response(Readable.toWeb(createReadStream(previewPath, { start, end })) as any, {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Length": String(end - start + 1),
+            "Content-Range": `bytes ${start}-${end}/${stats.size}`,
+          },
+        });
+      }
+
+      return new Response(Readable.toWeb(createReadStream(previewPath)) as any, {
+        headers: { ...baseHeaders, "Content-Length": String(stats.size) },
+      });
+    } catch (e: any) { return c.json({ error: e.message }, 500); }
+  });
+
   app.get("/api/media/:id/pipeline", async (c) => {
     if (!hasDb) return c.json([]);
     try {
@@ -951,7 +1122,25 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
       const cache = await discoverModels({ version: "0.1.1", refresh });
       return c.json(cache);
     } catch (e: any) {
-      return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
+      const message = e?.message ?? String(e);
+      if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
+        const { loadAuth } = await import("../llm/codex/auth_store.js");
+        const auth = await loadAuth().catch(() => null);
+        return c.json({
+          account_id: ctx.config.llm.codex_account_id ?? auth?.tokens?.account_id ?? null,
+          fetched_at: new Date().toISOString(),
+          models: [
+            { id: "gpt-5.5", name: "gpt-5.5" },
+            { id: "gpt-5.4", name: "gpt-5.4" },
+            { id: "gpt-5.4-mini", name: "gpt-5.4-mini" },
+            { id: "gpt-5.3-codex", name: "gpt-5.3-codex" },
+            { id: "gpt-5.2", name: "gpt-5.2" },
+          ],
+          fallback: true,
+          warning: "Codex model discovery was blocked, using known ChatGPT subscription model slugs.",
+        });
+      }
+      return c.json({ ok: false, error: message }, 500);
     }
   });
 

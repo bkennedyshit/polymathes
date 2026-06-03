@@ -27,9 +27,67 @@ import {
   type CodexAuthStored,
   type CodexTokens,
 } from "./responses_protocol.js";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** OpenAI's token endpoint — same one the Codex CLI hits. */
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
+
+/**
+ * Resolve the live Codex CLI auth path (`$CODEX_HOME/auth.json` or
+ * `~/.codex/auth.json`). Codex CLI rotates the refresh_token on every
+ * refresh; if Polymath holds a stale *copy*, that copy dies the moment
+ * Codex CLI refreshes (OpenAI invalidates the old refresh_token —
+ * exactly the rotation race that produces a 401). To avoid it, we read
+ * the CLI's live file when it exists and is newer than our stored copy,
+ * so Codex CLI owns the lifecycle and Polymath just rides whatever is
+ * current. This mirrors how OpenClaw / OpenCode share the credential.
+ */
+function getCodexCliAuthPath(): string {
+  const override = process.env.CODEX_HOME;
+  const codexHome = override && override.trim() ? override : join(homedir(), ".codex");
+  return join(codexHome, "auth.json");
+}
+
+/**
+ * Load auth, preferring the live Codex CLI file when it is present and
+ * at least as fresh as Polymath's stored copy. Falls back to Polymath's
+ * own store (set by `polymath llm login`, which has no Codex CLI to
+ * defer to). Returns null when neither exists.
+ */
+async function loadFreshestAuth(): Promise<CodexAuthStored | null> {
+  const ours = await loadAuth();
+  const cliPath = getCodexCliAuthPath();
+  if (!existsSync(cliPath)) return ours;
+
+  try {
+    const parsed = JSON.parse(readFileSync(cliPath, "utf-8"));
+    if (parsed?.auth_mode !== "chatgpt") return ours;
+    const t = parsed?.tokens;
+    if (!t?.access_token || !t?.refresh_token || !t?.account_id) return ours;
+    const cliAuth: CodexAuthStored = {
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: t.access_token,
+        id_token: typeof t.id_token === "string" ? t.id_token : (ours?.tokens.id_token ?? ""),
+        refresh_token: t.refresh_token,
+        account_id: t.account_id,
+      },
+      last_refresh:
+        typeof parsed?.last_refresh === "string" && parsed.last_refresh
+          ? parsed.last_refresh
+          : new Date().toISOString(),
+    };
+    // Use the CLI's copy when it's newer (or when we have nothing).
+    if (!ours) return cliAuth;
+    const cliMs = new Date(cliAuth.last_refresh).getTime();
+    const ourMs = new Date(ours.last_refresh).getTime();
+    return cliMs >= ourMs ? cliAuth : ours;
+  } catch {
+    return ours;
+  }
+}
 
 /**
  * Public client ID used by every first- and third-party Codex consumer
@@ -58,7 +116,7 @@ const REFRESH_WINDOW_MS = 25 * 60 * 1000;
  * refresh endpoint returns a non-200.
  */
 export async function ensureFreshToken(): Promise<CodexTokens> {
-  const auth = await loadAuth();
+  const auth = await loadFreshestAuth();
   if (!auth) {
     throw new CodexAuthExpired(
       "No Codex auth stored. Run `polymath llm login` or `polymath llm import-codex` first.",
@@ -81,11 +139,19 @@ export async function ensureFreshToken(): Promise<CodexTokens> {
  * even though our local clock still considers it fresh.
  */
 export async function forceRefresh(): Promise<CodexTokens> {
-  const auth = await loadAuth();
+  const auth = await loadFreshestAuth();
   if (!auth) {
     throw new CodexAuthExpired(
       "No Codex auth stored. Run `polymath llm login` or `polymath llm import-codex` first.",
     );
+  }
+  // If the live Codex CLI file is already fresh, prefer its tokens
+  // outright rather than burning our (possibly stale) refresh_token —
+  // this is the common case right after `codex` re-authenticated.
+  const ageMs = Date.now() - new Date(auth.last_refresh).getTime();
+  if (ageMs >= 0 && ageMs < REFRESH_WINDOW_MS) {
+    await saveAuth(auth);
+    return auth.tokens;
   }
   return refreshAndSave(auth);
 }
