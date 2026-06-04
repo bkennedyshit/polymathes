@@ -1,11 +1,16 @@
 import { Telegraf } from "telegraf";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Transport } from "./base.js";
 import { transcribe, type SttConfig } from "../voice/stt.js";
 import type { PairingManager } from "../security/pairing.js";
 import { sanitizeContext } from "../memory/scrubber.js";
+import { extractMediaArtifacts, type MediaArtifact } from "../media/artifacts.js";
+
+const MAX_TELEGRAM_MEDIA_ATTACHMENTS = 3;
+const MAX_TELEGRAM_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_TELEGRAM_OTHER_BYTES = 50 * 1024 * 1024;
 
 /**
  * Split text into chunks <= maxLen (Telegram hard limit is 4096 but leave
@@ -91,11 +96,65 @@ export class TelegramTransport implements Transport {
     for (const chunk of chunks) {
       await this.bot.telegram.sendMessage(chatId, chunk);
     }
+    await this.sendMediaArtifacts(chatId, safe);
   }
 
   private checkSender(senderId: string): "approved" | "pending" | "unknown" {
     if (!this.pairingManager) return "approved";
     return this.pairingManager.checkSender("telegram", senderId);
+  }
+
+  private async sendMediaArtifacts(chatId: number, text: string): Promise<void> {
+    const artifacts = extractMediaArtifacts(text, MAX_TELEGRAM_MEDIA_ATTACHMENTS);
+    for (const artifact of artifacts) {
+      await this.sendMediaArtifact(chatId, artifact);
+    }
+  }
+
+  private async sendMediaArtifact(chatId: number, artifact: MediaArtifact): Promise<void> {
+    const filePath = artifact.path;
+    try {
+      if (!existsSync(filePath)) {
+        await this.bot.telegram.sendMessage(chatId, `Media file is not on this machine anymore: ${basename(filePath)}`);
+        return;
+      }
+
+      const stats = statSync(filePath);
+      if (!stats.isFile()) return;
+
+      const maxBytes = artifact.kind === "image" ? MAX_TELEGRAM_IMAGE_BYTES : MAX_TELEGRAM_OTHER_BYTES;
+      if (stats.size > maxBytes) {
+        const mb = Math.ceil(stats.size / 1024 / 1024);
+        const cap = Math.floor(maxBytes / 1024 / 1024);
+        await this.bot.telegram.sendMessage(chatId, `Media is ${mb} MB, over the Telegram send cap I use here (${cap} MB). Path: ${filePath}`);
+        return;
+      }
+
+      const caption = basename(filePath).slice(0, 900);
+      const source = { source: filePath };
+
+      if (artifact.kind === "image") {
+        await this.bot.telegram.sendPhoto(chatId, source, { caption });
+        return;
+      }
+      if (artifact.kind === "video") {
+        await this.bot.telegram.sendVideo(chatId, source, { caption, supports_streaming: true });
+        return;
+      }
+      if (artifact.kind === "audio") {
+        await this.bot.telegram.sendAudio(chatId, source, { caption });
+        return;
+      }
+    } catch (e: any) {
+      try {
+        await this.bot.telegram.sendDocument(chatId, { source: filePath }, { caption: basename(filePath).slice(0, 900) });
+      } catch (fallbackErr: any) {
+        console.error("[telegram] media send failed:", fallbackErr?.message ?? fallbackErr, "source:", e?.message ?? e);
+        try {
+          await this.bot.telegram.sendMessage(chatId, `I found media but Telegram could not upload it. Path: ${filePath}`);
+        } catch { /* ignore */ }
+      }
+    }
   }
 
   private setupHandlers(): void {
@@ -140,6 +199,7 @@ export class TelegramTransport implements Transport {
         for (let i = 1; i < chunks.length; i++) {
           await ctx.reply(chunks[i]);
         }
+        await this.sendMediaArtifacts(chatId, safe);
       } catch (e: any) {
         console.error("[telegram] text handler error:", e?.message ?? e);
         try { await ctx.reply("Error: " + (e?.message ?? "unknown").slice(0, 200)); } catch { /* */ }
@@ -184,6 +244,7 @@ export class TelegramTransport implements Transport {
         const safe = sanitizeContext(response);
         const chunks = chunkTelegramText(safe, 4000);
         for (const chunk of chunks) await ctx.reply(chunk);
+        await this.sendMediaArtifacts(chatId, safe);
       } catch (e: any) {
         console.error("[telegram] voice handler error:", e?.message ?? e);
       }
