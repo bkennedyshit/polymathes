@@ -1,7 +1,8 @@
 import { Telegraf } from "telegraf";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { ulid } from "ulid";
 import type { Transport } from "./base.js";
 import { transcribe, type SttConfig } from "../voice/stt.js";
 import type { PairingManager } from "../security/pairing.js";
@@ -11,6 +12,7 @@ import { extractMediaArtifacts, type MediaArtifact } from "../media/artifacts.js
 const MAX_TELEGRAM_MEDIA_ATTACHMENTS = 3;
 const MAX_TELEGRAM_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TELEGRAM_OTHER_BYTES = 50 * 1024 * 1024;
+const MAX_TELEGRAM_INBOUND_BYTES = 100 * 1024 * 1024;
 
 /**
  * Split text into chunks <= maxLen (Telegram hard limit is 4096 but leave
@@ -39,6 +41,29 @@ function chunkTelegramText(text: string, maxLen = 4000): string[] {
   }
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+function extensionFromMime(mime?: string): string {
+  const normalized = (mime ?? "").toLowerCase();
+  if (normalized === "image/jpeg") return ".jpg";
+  if (normalized === "image/png") return ".png";
+  if (normalized === "image/webp") return ".webp";
+  if (normalized === "image/gif") return ".gif";
+  if (normalized === "video/mp4") return ".mp4";
+  if (normalized === "video/quicktime") return ".mov";
+  if (normalized === "video/webm") return ".webm";
+  if (normalized === "audio/mpeg") return ".mp3";
+  if (normalized === "audio/mp4") return ".m4a";
+  if (normalized === "audio/wav") return ".wav";
+  return ".bin";
+}
+
+function mediaKindFromMime(mime?: string): "image" | "video" | "audio" | "file" {
+  const normalized = (mime ?? "").toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized.startsWith("audio/")) return "audio";
+  return "file";
 }
 
 export interface TelegramTransportOptions {
@@ -157,6 +182,91 @@ export class TelegramTransport implements Transport {
     }
   }
 
+  private async downloadTelegramFile(opts: {
+    fileId: string;
+    sessionId: string;
+    fallbackName: string;
+    mime?: string;
+    caption?: string;
+  }): Promise<{ path: string; size: number; kind: string; caption?: string }> {
+    const fileLink = await this.bot.telegram.getFileLink(opts.fileId);
+    const ext = extname(opts.fallbackName) || extensionFromMime(opts.mime);
+    const safeName = basename(opts.fallbackName || `telegram-${ulid()}${ext}`).replace(/[^\w.-]+/g, "_");
+    const dir = join(homedir(), ".polymath", "inbox", "telegram", opts.sessionId);
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, `${ulid()}-${safeName.endsWith(ext) ? safeName : safeName + ext}`);
+
+    const res = await fetch(fileLink.href);
+    if (!res.ok) throw new Error(`telegram file download failed: ${res.status} ${res.statusText}`);
+    const contentLength = Number(res.headers.get("content-length") ?? "0");
+    if (contentLength > MAX_TELEGRAM_INBOUND_BYTES) {
+      const mb = Math.ceil(contentLength / 1024 / 1024);
+      throw new Error(`telegram attachment is ${mb} MB; max inbound cap is ${Math.floor(MAX_TELEGRAM_INBOUND_BYTES / 1024 / 1024)} MB`);
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_TELEGRAM_INBOUND_BYTES) {
+      const mb = Math.ceil(buf.length / 1024 / 1024);
+      throw new Error(`telegram attachment is ${mb} MB; max inbound cap is ${Math.floor(MAX_TELEGRAM_INBOUND_BYTES / 1024 / 1024)} MB`);
+    }
+    writeFileSync(filePath, buf);
+
+    return {
+      path: filePath,
+      size: buf.length,
+      kind: mediaKindFromMime(opts.mime),
+      caption: opts.caption?.trim() || undefined,
+    };
+  }
+
+  private attachmentPrompt(attachment: { path: string; size: number; kind: string; caption?: string }, userText?: string): string {
+    const mb = (attachment.size / 1024 / 1024).toFixed(1);
+    const parts = [
+      userText?.trim() || attachment.caption || "I sent an attachment.",
+      "",
+      "[Attached media]",
+      `- path: ${attachment.path}`,
+      `- kind: ${attachment.kind}`,
+      `- size_mb: ${mb}`,
+      "- source: telegram upload",
+      "",
+      "Treat this as session context first. Do not add it to permanent media memory or run a broad media index unless the user explicitly asks to add/save/index/remember it.",
+    ];
+    if (attachment.caption && attachment.caption !== userText?.trim()) parts.splice(4, 0, `- caption: ${attachment.caption}`);
+    return parts.join("\n");
+  }
+
+  private async handleInboundAttachment(ctx: any, attachment: { path: string; size: number; kind: string; caption?: string }, userText?: string): Promise<void> {
+    const chatId = ctx.chat.id;
+    const sessionId = String(chatId);
+    const senderId = String(ctx.from.id);
+    this.sessions.set(sessionId, chatId);
+
+    const status = this.checkSender(senderId);
+    if (status === "unknown" && this.pairingManager) {
+      const code = this.pairingManager.createPairing("telegram", senderId);
+      await ctx.reply(`Hi! I need to verify you. Your pairing code is: ${code}. Ask the owner to run: polymath pair approve ${code}`);
+      return;
+    }
+    if (status === "pending") {
+      await ctx.reply("Your pairing is still pending approval.");
+      return;
+    }
+
+    const prompt = this.attachmentPrompt(attachment, userText);
+    const response = await this.onMessage({
+      channel: "telegram",
+      senderId,
+      text: prompt,
+      sessionId,
+    });
+
+    const safe = sanitizeContext(response);
+    const chunks = chunkTelegramText(safe, 4000);
+    for (const chunk of chunks) await ctx.reply(chunk);
+    await this.sendMediaArtifacts(chatId, safe);
+  }
+
   private setupHandlers(): void {
     this.bot.on("text", async (ctx) => {
       try {
@@ -250,11 +360,69 @@ export class TelegramTransport implements Transport {
       }
     });
 
-    this.bot.on("photo", async (_ctx) => {
+    this.bot.on("photo", async (ctx) => {
       try {
-        console.log("[telegram] photo processing not yet wired");
+        const photos = ctx.message.photo ?? [];
+        const best = photos[photos.length - 1];
+        if (!best) return;
+        const attachment = await this.downloadTelegramFile({
+          fileId: best.file_id,
+          sessionId: String(ctx.chat.id),
+          fallbackName: `telegram-photo-${best.file_unique_id}.jpg`,
+          mime: "image/jpeg",
+          caption: ctx.message.caption,
+        });
+        await this.handleInboundAttachment(ctx, attachment, ctx.message.caption);
       } catch (e: any) {
         console.error("[telegram] photo handler error:", e?.message ?? e);
+        try { await ctx.reply("Error handling Telegram photo: " + (e?.message ?? "unknown").slice(0, 200)); } catch { /* ignore */ }
+      }
+    });
+
+    this.bot.on("video", async (ctx) => {
+      try {
+        const video = ctx.message.video;
+        if (video.file_size && video.file_size > MAX_TELEGRAM_INBOUND_BYTES) {
+          await ctx.reply(`That video is ${Math.ceil(video.file_size / 1024 / 1024)} MB. I won't pull it into session context unless the inbound cap is raised.`);
+          return;
+        }
+        const attachment = await this.downloadTelegramFile({
+          fileId: video.file_id,
+          sessionId: String(ctx.chat.id),
+          fallbackName: video.file_name || `telegram-video-${video.file_unique_id}.mp4`,
+          mime: video.mime_type || "video/mp4",
+          caption: ctx.message.caption,
+        });
+        await this.handleInboundAttachment(ctx, attachment, ctx.message.caption);
+      } catch (e: any) {
+        console.error("[telegram] video handler error:", e?.message ?? e);
+        try { await ctx.reply("Error handling Telegram video: " + (e?.message ?? "unknown").slice(0, 200)); } catch { /* ignore */ }
+      }
+    });
+
+    this.bot.on("document", async (ctx) => {
+      try {
+        const doc = ctx.message.document;
+        const kind = mediaKindFromMime(doc.mime_type);
+        if (kind === "file") {
+          await ctx.reply("I received the file, but only image/video/audio attachments are wired into media context right now.");
+          return;
+        }
+        if (doc.file_size && doc.file_size > MAX_TELEGRAM_INBOUND_BYTES) {
+          await ctx.reply(`That file is ${Math.ceil(doc.file_size / 1024 / 1024)} MB. I won't pull it into session context unless the inbound cap is raised.`);
+          return;
+        }
+        const attachment = await this.downloadTelegramFile({
+          fileId: doc.file_id,
+          sessionId: String(ctx.chat.id),
+          fallbackName: doc.file_name || `telegram-upload-${doc.file_unique_id}${extensionFromMime(doc.mime_type)}`,
+          mime: doc.mime_type,
+          caption: ctx.message.caption,
+        });
+        await this.handleInboundAttachment(ctx, attachment, ctx.message.caption);
+      } catch (e: any) {
+        console.error("[telegram] document handler error:", e?.message ?? e);
+        try { await ctx.reply("Error handling Telegram file: " + (e?.message ?? "unknown").slice(0, 200)); } catch { /* ignore */ }
       }
     });
   }
