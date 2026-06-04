@@ -600,6 +600,25 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     });
   });
 
+  app.post("/api/file-reveal", async (c) => {
+    const body = await c.req.json<{ path?: string }>().catch(() => ({}));
+    if (!body.path) return c.json({ error: "path required" }, 400);
+
+    const filePath = resolve(body.path);
+    if (!existsSync(filePath)) return c.json({ error: "file missing on disk", path: filePath }, 404);
+    const stats = statSync(filePath);
+    if (!stats.isFile()) return c.json({ error: "not a file", path: filePath }, 400);
+
+    if (process.platform === "win32") {
+      spawn("explorer.exe", ["/select,", filePath], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+      return c.json({ ok: true, action: "reveal", path: filePath });
+    }
+
+    const opener = process.platform === "darwin" ? "open" : "xdg-open";
+    spawn(opener, [dirname(filePath)], { detached: true, stdio: "ignore" }).unref();
+    return c.json({ ok: true, action: "open_parent", path: filePath });
+  });
+
   // ==========================================================
   // Streaming chat over SSE — emits iteration/tool_call/tool_result/final events
   // ==========================================================

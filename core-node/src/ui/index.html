@@ -293,32 +293,51 @@ function MediaPreviewCard({ path }) {
     };
   }, [path]);
 
-  return e('div', { className: 'mt-3 overflow-hidden rounded-xl border border-bg-600 bg-bg-900/70' },
+  const reveal = async () => {
+    try {
+      const r = await fetch('/api/file-reveal', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ path }),
+      });
+      if (!r.ok) {
+        let msg = r.status + ' ' + r.statusText;
+        try { const j = await r.json(); msg = j.error || msg; } catch {}
+        throw new Error(msg);
+      }
+      toast('Opened in Explorer', 'success');
+    } catch (e) {
+      toast(e.message || 'reveal failed', 'error');
+    }
+  };
+
+  return e('div', { className: 'mt-3 inline-block max-w-full overflow-hidden rounded-xl border border-bg-600 bg-bg-800/80 align-top shadow-lg shadow-black/20' },
     e('div', { className: 'flex items-center justify-between gap-3 border-b border-bg-700 px-3 py-2' },
-      e('div', { className: 'min-w-0' },
-        e('div', { className: 'truncate text-sm font-medium text-gray-100' }, basename(path)),
-        e('div', { className: 'truncate mono text-[11px] text-gray-500', title: path }, path)
-      ),
-      e('div', { className: 'flex shrink-0 items-center gap-2' },
+      e('div', { className: 'min-w-0 pr-2 text-sm font-medium text-gray-100', title: path }, basename(path)),
+      e('div', { className: 'flex shrink-0 items-center gap-1.5' },
         url && e('a', {
           href: url,
           target: '_blank',
           rel: 'noopener noreferrer',
           className: 'rounded-md border border-bg-600 bg-bg-800 px-2 py-1 text-xs text-accent hover:bg-bg-700',
-        }, 'Open'),
+        }, 'Preview'),
+        e('button', {
+          className: 'rounded-md border border-bg-600 bg-bg-800 px-2 py-1 text-xs text-gray-300 hover:bg-bg-700',
+          onClick: reveal,
+        }, 'Reveal'),
         e('button', {
           className: 'rounded-md border border-bg-600 bg-bg-800 px-2 py-1 text-xs text-gray-300 hover:bg-bg-700',
           onClick: () => navigator.clipboard?.writeText(path).then(() => toast('Path copied', 'success')).catch(() => toast('copy failed', 'error')),
-        }, 'Copy')
+        }, 'Copy path')
       )
     ),
     err ? e('div', { className: 'p-3 text-sm text-red-300' }, err) :
     !url ? e('div', { className: 'p-3 text-sm text-gray-500' }, 'Loading preview...') :
     isImage ? e('a', { href: url, target: '_blank', rel: 'noopener noreferrer' },
-      e('img', { src: url, className: 'max-h-80 w-full bg-black object-contain', alt: basename(path) })
+      e('img', { src: url, className: 'block max-h-[32rem] max-w-full object-contain', alt: basename(path) })
     ) :
-    isVideo ? e('video', { src: url, className: 'max-h-80 w-full bg-black', controls: true, preload: 'metadata' }) :
-    isAudio ? e('div', { className: 'p-3' }, e('audio', { src: url, className: 'w-full', controls: true, preload: 'metadata' })) :
+    isVideo ? e('video', { src: url, className: 'block max-h-[32rem] max-w-full bg-black', controls: true, preload: 'metadata' }) :
+    isAudio ? e('div', { className: 'w-96 max-w-full p-3' }, e('audio', { src: url, className: 'w-full', controls: true, preload: 'metadata' })) :
     e('div', { className: 'p-3 text-sm text-gray-500' }, 'Preview unavailable')
   );
 }
