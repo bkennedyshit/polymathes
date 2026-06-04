@@ -6,6 +6,7 @@ search/describe, plus the metadata tagging. Semantic quality is NOT asserted
 """
 
 from mneme.config import Config
+from mneme.artifacts import artifact_payload
 from mneme.embedder import HashEmbedder, get_embedder
 from mneme.indexer import Indexer
 from mneme.server import build_server
@@ -58,6 +59,27 @@ def test_identical_text_is_top_hit(tmp_path):
     assert hits[0].path == "/notes/a.md"
 
 
+def test_artifact_payload_is_host_neutral(tmp_path):
+    cfg = Config(db_path=tmp_path / "m.db", backend="hash")
+    store = Store(cfg.db_path)
+    emb = HashEmbedder()
+    aid = store.save_asset(
+        "/content/brand-a/reels/clip.mp4",
+        "video_segment",
+        emb.embed_text("product launch clip"),
+        timestamp=2.0,
+        metadata={"brand": "brand-a", "intent": "reel"},
+    )
+    hit = store.get_by_id(aid)
+    payload = artifact_payload([hit], query="product launch clip")
+    item = payload["results"][0]
+    assert payload["output_contract"] == "media_artifacts.v1"
+    assert item["kind"] == "video"
+    assert item["preview"] is True
+    assert item["actions"] == ["preview", "reveal", "copy_path"]
+    assert "style" not in item and "color" not in item
+
+
 def test_build_server_registers_four_tools(tmp_path):
     cfg = Config(db_path=tmp_path / "m.db", backend="hash")
     server = build_server(cfg)
@@ -66,7 +88,16 @@ def test_build_server_registers_four_tools(tmp_path):
     tm = getattr(server, "_tool_manager", None)
     if tm is not None:
         names = set(tm._tools.keys())
-    expected = {"media_index", "media_search", "media_search_by_image", "media_describe"}
+    expected = {
+        "media_index",
+        "media_search",
+        "media_search_by_image",
+        "media_describe",
+        "gpu_status",
+        "gpu_release",
+        "gpu_reclaim",
+        "gpu_evacuate",
+    }
     assert expected.issubset(names) or names == set()  # tolerant to SDK internals
 
 

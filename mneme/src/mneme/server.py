@@ -10,6 +10,9 @@ Tools:
     media_search          natural-language semantic search
     media_search_by_image reverse-image (find visually similar) search
     media_describe        fetch the full record for an asset id
+    gpu_status            report local GPU / Ollama model state
+    gpu_release           unload Ollama and lease the GPU to a user workflow
+    gpu_reclaim           end a prior GPU lease
 """
 
 from __future__ import annotations
@@ -19,8 +22,10 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from .artifacts import artifact_payload, media_artifact
 from .config import Config
 from .embedder import get_embedder
+from .gpu import GpuBroker
 from .indexer import Indexer
 from .store import Store
 
@@ -32,6 +37,7 @@ class _Engine:
         self.config = config
         self._store: Optional[Store] = None
         self._embedder = None
+        self.gpu = GpuBroker()
 
     @property
     def store(self) -> Store:
@@ -47,18 +53,8 @@ class _Engine:
         return self._embedder
 
 
-def _result_payload(results) -> str:
-    return json.dumps([
-        {
-            "id": r.id,
-            "path": r.path,
-            "type": r.type,
-            "score": round(r.score, 4),
-            **({"timestamp": r.timestamp} if r.timestamp else {}),
-            **({"metadata": r.metadata} if r.metadata else {}),
-        }
-        for r in results
-    ])
+def _result_payload(results, *, query: str | None = None) -> str:
+    return json.dumps(artifact_payload(results, query=query))
 
 
 def build_server(config: Optional[Config] = None) -> FastMCP:
@@ -89,14 +85,14 @@ def build_server(config: Optional[Config] = None) -> FastMCP:
             vec, top_k=top_k, min_score=min_score,
             type_filter=type_filter or None,
         )
-        return _result_payload(results)
+        return _result_payload(results, query=query)
 
     @mcp.tool()
     def media_search_by_image(image_path: str, top_k: int = 10) -> str:
         """Reverse image search — find visually similar indexed media."""
         vec = engine.embedder.embed_image(image_path)
         results = engine.store.search(vec, top_k=top_k, min_score=config.min_score)
-        return _result_payload(results)
+        return _result_payload(results, query=image_path)
 
     @mcp.tool()
     def media_describe(id: int) -> str:
@@ -104,13 +100,27 @@ def build_server(config: Optional[Config] = None) -> FastMCP:
         record = engine.store.get_by_id(id)
         if record is None:
             return json.dumps({"error": f"no asset with id {id}"})
-        return json.dumps({
-            "id": record.id,
-            "path": record.path,
-            "type": record.type,
-            "timestamp": record.timestamp,
-            "metadata": record.metadata,
-        })
+        return json.dumps({"ok": True, "result": media_artifact(record)})
+
+    @mcp.tool()
+    def gpu_status() -> str:
+        """Report local GPU / VRAM state and currently loaded Ollama models."""
+        return json.dumps(engine.gpu.status())
+
+    @mcp.tool()
+    def gpu_release(reason: str = "agent handoff", hold_minutes: int = 60) -> str:
+        """Unload Ollama models and reserve the GPU for another workflow."""
+        return json.dumps(engine.gpu.release_gpu(reason=reason, hold_minutes=hold_minutes))
+
+    @mcp.tool()
+    def gpu_reclaim(token: str) -> str:
+        """Release a prior GPU lease token returned by gpu_release."""
+        return json.dumps(engine.gpu.reclaim(token))
+
+    @mcp.tool()
+    def gpu_evacuate() -> str:
+        """Unload currently resident Ollama models without creating a lease."""
+        return json.dumps(engine.gpu.evacuate())
 
     return mcp
 

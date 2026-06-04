@@ -23,6 +23,7 @@ Then list to confirm the tools are visible to OpenClaw:
 ```bash
 mcporter list mneme
 # media_index  media_search  media_search_by_image  media_describe
+# gpu_status   gpu_release   gpu_reclaim            gpu_evacuate
 ```
 
 ## Try it from any channel

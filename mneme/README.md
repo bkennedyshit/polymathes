@@ -134,7 +134,7 @@ mcporter add mneme -- uvx --from 'mneme-mcp[clip]' mneme-mcp
 Full walkthrough: [`examples/openclaw.md`](examples/openclaw.md).
 </details>
 
-Once added, your assistant gains four tools:
+Once added, your assistant gains media tools plus GPU handoff tools:
 
 | Tool | What it does |
 |---|---|
@@ -142,6 +142,15 @@ Once added, your assistant gains four tools:
 | `media_search` | find things by describing them |
 | `media_search_by_image` | find things that look like an example image |
 | `media_describe` | get full details for one result |
+| `gpu_status` | report local VRAM and loaded Ollama models |
+| `gpu_release` | unload Ollama and lease the GPU to another workflow |
+| `gpu_reclaim` | end a prior GPU lease |
+| `gpu_evacuate` | unload Ollama models without creating a lease |
+
+Search results are returned as neutral `media_artifacts.v1` JSON. Mneme does not
+set colors or UI styling; hosts render the artifacts in their own design system.
+Each result includes title, kind, path, score, preview hint, reason, and
+`preview` / `reveal` / `copy_path` action names.
 
 ---
 
@@ -179,6 +188,7 @@ program powers both your own agent and any third-party assistant.
 | `MNEME_CLIP_MODEL` | `ViT-B-32` | which CLIP model to use |
 | `MNEME_NATIVE_BIN` | – | path to your C++/TensorRT engine for max speed |
 | `MNEME_TOP_K` / `MNEME_MIN_SCORE` | `10` / `0.25` | search result defaults |
+| `MNEME_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint used by GPU release tools |
 
 ---
 

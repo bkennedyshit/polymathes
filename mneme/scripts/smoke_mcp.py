@@ -47,7 +47,16 @@ async def main() -> int:
 
             tools = {t.name for t in (await session.list_tools()).tools}
             print("tools:", sorted(tools))
-            assert {"media_index", "media_search", "media_search_by_image", "media_describe"} <= tools
+            assert {
+                "media_index",
+                "media_search",
+                "media_search_by_image",
+                "media_describe",
+                "gpu_status",
+                "gpu_release",
+                "gpu_reclaim",
+                "gpu_evacuate",
+            } <= tools
 
             idx = await session.call_tool("media_index", {"path": str(workdir)})
             idx_text = idx.content[0].text
@@ -55,7 +64,9 @@ async def main() -> int:
             assert json.loads(idx_text)["indexed"] == 2
 
             res = await session.call_tool("media_search", {"query": "rooftop sunset session", "min_score": 0.0})
-            hits = json.loads(res.content[0].text)
+            payload = json.loads(res.content[0].text)
+            assert payload["output_contract"] == "media_artifacts.v1"
+            hits = payload["results"]
             print("search hits:", len(hits))
             assert hits, "expected at least one hit"
 
@@ -63,9 +74,9 @@ async def main() -> int:
             desc = await session.call_tool("media_describe", {"id": top["id"]})
             rec = json.loads(desc.content[0].text)
             print("describe:", rec)
-            assert rec["metadata"].get("brand") == "skating"
+            assert rec["result"]["metadata"].get("brand") == "skating"
 
-    print("\nSMOKE OK ✓  (MCP handshake, index, search, describe all working)")
+    print("\nSMOKE OK - MCP handshake, index, search, describe all working")
     return 0
 
 
