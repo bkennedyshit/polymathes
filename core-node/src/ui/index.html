@@ -252,6 +252,83 @@ function prettyJson(s) {
   try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
 }
 
+const MEDIA_PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\n\r"'<>`]+?\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a)\b/gi;
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|avi|mkv)$/i;
+const AUDIO_EXT_RE = /\.(mp3|wav|m4a)$/i;
+
+function extractMediaPaths(text) {
+  const matches = text.match(MEDIA_PATH_RE) || [];
+  return Array.from(new Set(matches.map(p => p.trim().replace(/[),.;:]+$/, '')))).slice(0, 6);
+}
+
+function basename(path) {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function MediaPreviewCard({ path }) {
+  const [url, setUrl] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const isImage = IMAGE_EXT_RE.test(path);
+  const isVideo = VIDEO_EXT_RE.test(path);
+  const isAudio = AUDIO_EXT_RE.test(path);
+
+  React.useEffect(() => {
+    let alive = true;
+    let objectUrl = '';
+    fetch('/api/file-preview?path=' + encodeURIComponent(path), { headers: authHeaders() })
+      .then(async (res) => {
+        if (!res.ok) {
+          let msg = res.status + ' ' + res.statusText;
+          try { const j = await res.json(); msg = j.error || msg; } catch {}
+          throw new Error(msg);
+        }
+        objectUrl = URL.createObjectURL(await res.blob());
+        if (alive) setUrl(objectUrl);
+      })
+      .catch(e => { if (alive) setErr(e.message); });
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path]);
+
+  return e('div', { className: 'mt-3 overflow-hidden rounded-xl border border-bg-600 bg-bg-900/70' },
+    e('div', { className: 'flex items-center justify-between gap-3 border-b border-bg-700 px-3 py-2' },
+      e('div', { className: 'min-w-0' },
+        e('div', { className: 'truncate text-sm font-medium text-gray-100' }, basename(path)),
+        e('div', { className: 'truncate mono text-[11px] text-gray-500', title: path }, path)
+      ),
+      e('div', { className: 'flex shrink-0 items-center gap-2' },
+        url && e('a', {
+          href: url,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          className: 'rounded-md border border-bg-600 bg-bg-800 px-2 py-1 text-xs text-accent hover:bg-bg-700',
+        }, 'Open'),
+        e('button', {
+          className: 'rounded-md border border-bg-600 bg-bg-800 px-2 py-1 text-xs text-gray-300 hover:bg-bg-700',
+          onClick: () => navigator.clipboard?.writeText(path).then(() => toast('Path copied', 'success')).catch(() => toast('copy failed', 'error')),
+        }, 'Copy')
+      )
+    ),
+    err ? e('div', { className: 'p-3 text-sm text-red-300' }, err) :
+    !url ? e('div', { className: 'p-3 text-sm text-gray-500' }, 'Loading preview...') :
+    isImage ? e('a', { href: url, target: '_blank', rel: 'noopener noreferrer' },
+      e('img', { src: url, className: 'max-h-80 w-full bg-black object-contain', alt: basename(path) })
+    ) :
+    isVideo ? e('video', { src: url, className: 'max-h-80 w-full bg-black', controls: true, preload: 'metadata' }) :
+    isAudio ? e('div', { className: 'p-3' }, e('audio', { src: url, className: 'w-full', controls: true, preload: 'metadata' })) :
+    e('div', { className: 'p-3 text-sm text-gray-500' }, 'Preview unavailable')
+  );
+}
+
+function MediaPreviewList({ text }) {
+  const paths = extractMediaPaths(text || '');
+  if (!paths.length) return null;
+  return e('div', { className: 'w-full' }, paths.map(path => e(MediaPreviewCard, { key: path, path })));
+}
+
 // ---------- Chat with live tool-call trace via SSE ----------
 function ChatPanel() {
   const [msgs, setMsgs] = React.useState(() => {
@@ -429,14 +506,17 @@ function ChatPanel() {
         ),
         e('div', { className: 'flex gap-3 ' + (m.role === 'user' ? 'justify-end' : 'justify-start') },
           m.role !== 'user' && e('div', { className: 'w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-sm font-bold ' + (m.role === 'error' ? 'bg-red-900 text-red-200' : 'bg-gradient-to-br from-accent to-accent-dim text-bg-900') }, m.role === 'error' ? '!' : 'Π'),
-          e('div', {
-            className: 'chat-msg max-w-[75%] px-4 py-2.5 rounded-2xl ' + (
-              m.role === 'user' ? 'bg-accent-dim text-white rounded-br-sm whitespace-pre-wrap' :
-              m.role === 'error' ? 'bg-red-950 text-red-200 border border-red-900' :
-              'bg-bg-800 text-gray-100 rounded-bl-sm border border-bg-700'
-            ),
-            dangerouslySetInnerHTML: m.role === 'user' ? undefined : renderMd(m.text),
-          }, m.role === 'user' ? m.text : null),
+          e('div', { className: 'flex max-w-[75%] flex-col ' + (m.role === 'user' ? 'items-end' : 'items-start') },
+            e('div', {
+              className: 'chat-msg w-full px-4 py-2.5 rounded-2xl ' + (
+                m.role === 'user' ? 'bg-accent-dim text-white rounded-br-sm whitespace-pre-wrap' :
+                m.role === 'error' ? 'bg-red-950 text-red-200 border border-red-900' :
+                'bg-bg-800 text-gray-100 rounded-bl-sm border border-bg-700'
+              ),
+              dangerouslySetInnerHTML: m.role === 'user' ? undefined : renderMd(m.text),
+            }, m.role === 'user' ? m.text : null),
+            m.role === 'assistant' && e(MediaPreviewList, { text: m.text })
+          ),
           m.role === 'user' && e('div', { className: 'w-8 h-8 rounded-lg flex-shrink-0 bg-bg-700 flex items-center justify-center text-xs mono text-gray-400' }, 'you')
         )
       )),

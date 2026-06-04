@@ -551,6 +551,55 @@ export function createApp(ctx: RuntimeContext, opts?: CreateAppOpts) {
     return c.json({ id, path: filePath, size: buf.length, name: file.name });
   });
 
+  app.get("/api/file-preview", async (c) => {
+    const requestedPath = c.req.query("path");
+    if (!requestedPath) return c.json({ error: "path required" }, 400);
+
+    const filePath = resolve(requestedPath);
+    if (!existsSync(filePath)) return c.json({ error: "file missing on disk", path: filePath }, 404);
+    const stats = statSync(filePath);
+    if (!stats.isFile()) return c.json({ error: "not a file", path: filePath }, 400);
+
+    const contentType = mediaContentType(filePath);
+    if (!contentType.startsWith("image/") && !contentType.startsWith("video/") && !contentType.startsWith("audio/")) {
+      return c.json({ error: "unsupported preview type", path: filePath, content_type: contentType }, 415);
+    }
+
+    const filename = filePath.split(/[\\/]/).pop() ?? "preview";
+    const baseHeaders: Record<string, string> = {
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=60",
+      "Content-Disposition": `inline; filename="${filename}"`,
+    };
+
+    const range = c.req.header("range");
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (!match) return c.body(null, 416);
+      const start = match[1] ? parseInt(match[1], 10) : 0;
+      const end = match[2] ? Math.min(parseInt(match[2], 10), stats.size - 1) : stats.size - 1;
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+        return c.body(null, 416, { "Content-Range": `bytes */${stats.size}` });
+      }
+      return new Response(Readable.toWeb(createReadStream(filePath, { start, end })) as any, {
+        status: 206,
+        headers: {
+          ...baseHeaders,
+          "Content-Length": String(end - start + 1),
+          "Content-Range": `bytes ${start}-${end}/${stats.size}`,
+        },
+      });
+    }
+
+    return new Response(Readable.toWeb(createReadStream(filePath)) as any, {
+      headers: {
+        ...baseHeaders,
+        "Content-Length": String(stats.size),
+      },
+    });
+  });
+
   // ==========================================================
   // Streaming chat over SSE — emits iteration/tool_call/tool_result/final events
   // ==========================================================
