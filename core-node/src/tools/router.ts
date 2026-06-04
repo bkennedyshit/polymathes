@@ -10,6 +10,16 @@ export interface ToolRouterConfig {
   sessionId?: string;
 }
 
+function deniedResult(toolName: string, reason: string): Record<string, unknown> {
+  return {
+    ok: false,
+    status: "denied",
+    tool: toolName,
+    reason,
+    message: `Tool call denied: ${reason}. The command did not run.`,
+  };
+}
+
 export class ToolRouter {
   private timeoutMs: number;
   private maxResultSize: number;
@@ -36,13 +46,13 @@ export class ToolRouter {
     const decision = evaluate(name, args as Record<string, unknown> | undefined, this.policy);
     if (decision.outcome === "deny") {
       this.audit.record({ tool_name: name, args: args as any, outcome: "deny", session_id: this.sessionId });
-      throw new Error(`denied: ${decision.reason}`);
+      return deniedResult(name, decision.reason);
     }
     if (decision.outcome === "approval_required") {
       const approved = await this.approvalQueue.enqueue(name, args as Record<string, unknown>, this.sessionId);
       if (!approved) {
         this.audit.record({ tool_name: name, args: args as any, outcome: "deny", session_id: this.sessionId });
-        throw new Error("approval denied");
+        return deniedResult(name, "approval denied");
       }
     }
 
