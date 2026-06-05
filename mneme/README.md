@@ -8,6 +8,13 @@ Lets your AI assistant search your own photos & videos in plain English
 ("rider mid-air at sunset") or by example image. Runs 100% on your machine.
 Plugs into OpenClaw, Hermes, Claude Desktop, Cursor — and your own polymathes agent.
 
+For OpenClaw, install Mneme together with the complementary Visual Memory skill
+from [`openclaw-polymath`](https://github.com/bkennedyshit/openclaw-polymath).
+Mneme is the local MCP engine; the skill teaches OpenClaw when and how to use it.
+
+Creator automation and paid agentic skill work live at [Axon](https://axon.nepa-ai.com).
+The Mneme project site is planned for [mneme.nepa-ai.com](https://mneme.nepa-ai.com).
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io)
@@ -128,9 +135,14 @@ Full walkthrough: [`examples/hermes.md`](examples/hermes.md).
 <details>
 <summary><b>OpenClaw</b></summary>
 
+Mneme and the OpenClaw Visual Memory skill are complementary. Install both:
+Mneme provides the tools, and the skill tells OpenClaw how to use them.
+
 ```bash
 mcporter add mneme -- uvx --from 'mneme-mcp[clip]' mneme-mcp
 ```
+Then install/publish the skill from
+[`openclaw-polymath`](https://github.com/bkennedyshit/openclaw-polymath).
 Full walkthrough: [`examples/openclaw.md`](examples/openclaw.md).
 </details>
 
@@ -203,8 +215,9 @@ program powers both your own agent and any third-party assistant.
 
 ## Status
 
-v0.1 — early but working: real CLIP search, creator-aware tags, native bridge,
-17 passing tests + a live MCP smoke test. Audio transcription and a PyPI release
+v0.2 — early but working: real CLIP search, creator-aware tags, neutral media
+artifacts, GPU handoff tools, native bridge, 18 passing tests + a live MCP smoke test.
+Audio transcription and a PyPI release
 are next. Video **editing** (vs. search) is the next wedge — see the roadmap.
 
 ## License
