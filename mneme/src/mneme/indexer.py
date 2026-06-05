@@ -69,6 +69,14 @@ class Indexer:
         frame_interval = frame_interval or self.config.frame_interval
         root_path = Path(root).expanduser()
 
+        if root_path.is_file():
+            stats.scanned = 1
+            try:
+                self._process_file(str(root_path), stats, force=force, frame_interval=frame_interval)
+            except Exception:  # noqa: BLE001 - keep result shape consistent
+                stats.errored += 1
+            return stats
+
         for dirpath, _dirs, files in os.walk(root_path):
             if exclude and exclude in dirpath:
                 continue
@@ -145,6 +153,7 @@ class Indexer:
         step = max(int(fps * frame_interval), 1)
         idx = 0
         from PIL import Image  # type: ignore
+        import os as _os
         import tempfile
 
         while True:
@@ -154,9 +163,16 @@ class Indexer:
             if idx % step == 0:
                 ts = idx / fps if fps else 0.0
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
-                    Image.fromarray(rgb).save(tmp.name)
-                    vec = self.embedder.embed_image(tmp.name)
+                fd, tmp_path = tempfile.mkstemp(suffix=".png")
+                _os.close(fd)
+                try:
+                    Image.fromarray(rgb).save(tmp_path)
+                    vec = self.embedder.embed_image(tmp_path)
+                finally:
+                    try:
+                        _os.remove(tmp_path)
+                    except OSError:
+                        pass
                 meta = build_metadata(path, frame.shape[1], frame.shape[0],
                                       extra={"frame_idx": idx})
                 self.store.save_asset(path, "video_segment", vec, timestamp=ts, metadata=meta)

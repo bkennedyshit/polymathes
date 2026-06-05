@@ -42,6 +42,21 @@ def test_index_walks_and_tags(tmp_path):
     assert img.metadata["warn_on_edit"] is True
 
 
+def test_index_accepts_single_file_path(tmp_path):
+    cfg = Config(db_path=tmp_path / "m.db", backend="hash")
+    store = Store(cfg.db_path)
+    media = tmp_path / "content" / "brand-a" / "photos" / "hero.png"
+    media.parent.mkdir(parents=True)
+    media.write_bytes(b"\x89PNG\r\n" + b"fake-image-bytes" * 100)
+
+    stats = Indexer(store, HashEmbedder(), cfg).scan_directory(str(media))
+
+    assert stats.scanned == 1
+    assert stats.indexed == 1
+    assert stats.errored == 0
+    assert store.count() == 1
+
+
 def _first_id_of_type(store, type_):
     row = store._conn.execute(
         "SELECT id FROM assets WHERE type = ? ORDER BY id LIMIT 1", (type_,)
